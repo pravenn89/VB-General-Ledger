@@ -7,6 +7,16 @@ import inspect
 import pandas as pd
 import streamlit as st
 
+# -----------------------------------------------------------------------------
+# 1. PAGE CONFIG (MUST BE THE VERY FIRST STREAMLIT COMMAND IN APP.PY)
+# -----------------------------------------------------------------------------
+st.set_page_config(
+    page_title="General Ledger Aggregator & Vendor Analysis",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
 # Filter out non-critical warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -37,16 +47,8 @@ def get_width_kwargs(stretch: bool = True):
 
 
 # -----------------------------------------------------------------------------
-# 1. PAGE CONFIG & STYLING
+# 2. STYLING & AESTHETICS
 # -----------------------------------------------------------------------------
-st.set_page_config(
-    page_title="General Ledger Aggregator & Vendor Analysis",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Custom CSS for UI aesthetics
 st.markdown("""
 <style>
     /* Global Container Padding */
@@ -98,7 +100,7 @@ st.markdown("""
 
 
 # -----------------------------------------------------------------------------
-# 2. SIDEBAR CONFIGURATION & DATA LOADING
+# 3. SIDEBAR CONFIGURATION & DATA LOADING
 # -----------------------------------------------------------------------------
 st.sidebar.image("https://img.icons8.com/color/96/general-ledger.png", width=64)
 st.sidebar.title("Ledger Settings & Filters")
@@ -174,7 +176,7 @@ else:
 
 
 # -----------------------------------------------------------------------------
-# 3. FILTERS & SEARCH CONTROLS
+# 4. FILTERS & SEARCH CONTROLS
 # -----------------------------------------------------------------------------
 if not df_raw.empty:
     st.sidebar.markdown("---")
@@ -241,7 +243,7 @@ if not df_raw.empty:
 
 
 # -----------------------------------------------------------------------------
-# 4. FILTER EXECUTION LOGIC
+# 5. FILTER EXECUTION LOGIC
 # -----------------------------------------------------------------------------
 df_filtered = df_raw.copy()
 
@@ -280,7 +282,7 @@ if not df_raw.empty:
 
 
 # -----------------------------------------------------------------------------
-# 5. DASHBOARD MAIN CONTENT
+# 6. DASHBOARD MAIN CONTENT
 # -----------------------------------------------------------------------------
 st.markdown('<div class="app-title">VASANTA BHAVAN HOTELS INDIA (P) LTD</div>', unsafe_allow_html=True)
 st.markdown('<div class="app-subtitle">Multi-File General Ledger Aggregator & Vendor Transaction Explorer</div>', unsafe_allow_html=True)
@@ -306,7 +308,7 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 
 # -----------------------------------------------------------------------------
-# 6. EXPORT BUTTONS & INTERACTIVE TABLE
+# 7. EXPORT BUTTONS & INTERACTIVE TABLE
 # -----------------------------------------------------------------------------
 tab_table, tab_summary = st.tabs(["📋 Filtered Ledger Transactions", "📊 Vendor / Branch Summary"])
 
