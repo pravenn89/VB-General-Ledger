@@ -2,6 +2,7 @@ import io
 import os
 import glob
 import json
+import time
 import urllib.request
 import pandas as pd
 import streamlit as st
@@ -23,6 +24,20 @@ FALLBACK_DATA_DIRS = [
     r"C:\Users\rtrpr\.gemini\antigravity\scratch\VB General Ledger\Data",
     r"C:\Users\rtrpr\.gemini\antigravity\scratch\VB General Ledger\data"
 ]
+
+def fetch_url_with_retry(url: str, retries: int = 3, backoff: float = 1.0) -> bytes:
+    """Helper to fetch URL content with automatic retries on network hiccups."""
+    last_exception = None
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=35) as res:
+                return res.read()
+        except Exception as e:
+            last_exception = e
+            time.sleep(backoff * (attempt + 1))
+    raise last_exception
+
 
 def get_default_data_dir() -> str:
     """Return the absolute path to the default Data directory."""
@@ -144,13 +159,8 @@ def load_github_ledger_data_cached():
     errors = []
     
     try:
-        req = urllib.request.Request(
-            GITHUB_API_URL,
-            headers={'User-Agent': 'Mozilla/5.0'}
-        )
-        with urllib.request.urlopen(req) as response:
-            contents = json.loads(response.read().decode())
-            
+        api_bytes = fetch_url_with_retry(GITHUB_API_URL, retries=3)
+        contents = json.loads(api_bytes.decode('utf-8'))
         excel_items = [item for item in contents if item['name'].endswith(('.xlsx', '.xls')) and not item['name'].startswith('~$')]
         
         for idx, item in enumerate(excel_items):
@@ -158,9 +168,7 @@ def load_github_ledger_data_cached():
             file_name = item.get('name')
             if download_url:
                 try:
-                    file_req = urllib.request.Request(download_url, headers={'User-Agent': 'Mozilla/5.0'})
-                    with urllib.request.urlopen(file_req) as file_res:
-                        file_bytes = file_res.read()
+                    file_bytes = fetch_url_with_retry(download_url, retries=3)
                     buffer = io.BytesIO(file_bytes)
                     sub_df = load_single_excel(buffer, file_name)
                     if not sub_df.empty:
@@ -264,11 +272,11 @@ def load_ledger_data_cached(folder_path: str = None):
     return combined_df, stats
 
 
-def load_ledger_data(mode: str = "GitHub Repository", folder_path: str = None, uploaded_files=None):
+def load_ledger_data(mode: str = "GitHub Repository (Auto-Load)", folder_path: str = None, uploaded_files=None):
     """
     Public data loading entry point handling GitHub auto-load, Local Directory, or Streamlit uploaded files.
     """
-    if mode == "GitHub Repository":
+    if "GitHub" in mode:
         return load_github_ledger_data_cached()
 
     if mode == "Upload Excel Files" and uploaded_files:
