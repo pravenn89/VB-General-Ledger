@@ -1,3 +1,4 @@
+import io
 import os
 import glob
 import pandas as pd
@@ -34,13 +35,10 @@ def find_excel_files(folder_path: str) -> list:
         target_path = get_default_data_dir()
     else:
         target_path = folder_path.strip()
-        # Resolve relative paths against BASE_DIR
         if not os.path.isabs(target_path):
             target_path = os.path.abspath(os.path.join(BASE_DIR, target_path))
             
-    # Check if target_path exists
     if not os.path.exists(target_path):
-        # Fallback to get_default_data_dir if target_path does not exist
         target_path = get_default_data_dir()
         
     if not os.path.exists(target_path):
@@ -83,7 +81,7 @@ def load_single_excel(file_source, source_name: str) -> pd.DataFrame:
     Read a single Excel file skipping title row (header=1).
     Clean column names and format datatypes.
     """
-    df = pd.read_excel(file_source, header=1)
+    df = pd.read_excel(file_source, header=1, engine="openpyxl")
     
     if df.empty:
         return pd.DataFrame()
@@ -119,6 +117,16 @@ def load_single_excel(file_source, source_name: str) -> pd.DataFrame:
             
     df['_source_file'] = source_name
     return df
+
+
+@st.cache_data(show_spinner=False)
+def parse_single_uploaded_file_cached(file_name: str, file_bytes: bytes) -> pd.DataFrame:
+    """
+    Cache parsing of an individual uploaded Excel file by its name and raw bytes content.
+    This prevents re-parsing uploaded files on UI interactions.
+    """
+    buffer = io.BytesIO(file_bytes)
+    return load_single_excel(buffer, file_name)
 
 
 @st.cache_data(show_spinner="Scanning and loading General Ledger Excel files...")
@@ -183,21 +191,33 @@ def load_ledger_data_cached(folder_path: str = None):
 
 def load_ledger_data(folder_path: str = None, uploaded_files=None):
     """
-    Public data loading entry point handling directory search or Streamlit uploaded files.
+    Public data loading entry point handling directory search or Streamlit uploaded files with caching.
     """
     if uploaded_files:
         dfs = []
         processed_files = []
         errors = []
-        for file_obj in uploaded_files:
+        
+        # Show parsing progress indicator
+        progress_text = f"Parsing {len(uploaded_files)} uploaded file(s)..."
+        progress_bar = st.sidebar.progress(0, text=progress_text)
+        
+        for idx, file_obj in enumerate(uploaded_files):
             filename = file_obj.name
             try:
-                sub_df = load_single_excel(file_obj, filename)
+                # Read raw bytes so Streamlit can cache by (filename, bytes)
+                file_bytes = file_obj.getvalue()
+                sub_df = parse_single_uploaded_file_cached(filename, file_bytes)
                 if not sub_df.empty:
                     dfs.append(sub_df)
                     processed_files.append(filename)
             except Exception as e:
                 errors.append(f"Error reading {filename}: {str(e)}")
+            
+            # Update progress bar
+            progress_bar.progress((idx + 1) / len(uploaded_files), text=f"Processed {idx + 1}/{len(uploaded_files)} files")
+
+        progress_bar.empty()
 
         if not dfs:
             empty_cols = [
