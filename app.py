@@ -2,8 +2,13 @@ import io
 import os
 import sys
 import datetime
+import warnings
 import pandas as pd
 import streamlit as st
+
+# Filter out non-critical deprecation warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # Ensure project root is in sys.path
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
