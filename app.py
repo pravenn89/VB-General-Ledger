@@ -1,11 +1,19 @@
 import io
 import os
 import sys
+import asyncio
 import datetime
 import warnings
 import inspect
 import pandas as pd
 import streamlit as st
+
+# Ensure asyncio event loop is set for Python 3.14 main thread
+try:
+    asyncio.get_running_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
 # -----------------------------------------------------------------------------
 # 1. PAGE CONFIG (MUST BE THE VERY FIRST STREAMLIT COMMAND IN APP.PY)

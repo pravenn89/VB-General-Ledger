@@ -1,5 +1,5 @@
-streamlit==1.42.0
-starlette==0.45.2
+streamlit==1.40.0
+starlette==0.38.6
 pandas>=2.0.0
 openpyxl>=3.1.0
 xlsxwriter>=3.1.0
