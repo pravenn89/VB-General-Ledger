@@ -4,7 +4,6 @@ import sys
 import asyncio
 import datetime
 import warnings
-import inspect
 import pandas as pd
 import streamlit as st
 
@@ -39,19 +38,6 @@ from utils.data_loader import (
     extract_unique_vendors, 
     get_default_data_dir
 )
-
-# Helper function to provide compatible width kwargs across Streamlit versions
-def get_width_kwargs(stretch: bool = True):
-    """
-    Dynamically select between `use_container_width` and `width` based on Streamlit version signature.
-    """
-    try:
-        sig = inspect.signature(st.dataframe)
-        if 'width' in sig.parameters:
-            return {'width': 'stretch' if stretch else 'content'}
-    except Exception:
-        pass
-    return {'use_container_width': stretch}
 
 
 # -----------------------------------------------------------------------------
@@ -327,8 +313,6 @@ display_columns = [
 ]
 present_cols = [c for c in display_columns if c in df_filtered.columns]
 
-w_kwargs = get_width_kwargs(True)
-
 with tab_table:
     exp_col1, exp_col2, exp_col3 = st.columns([2, 1, 1])
     
@@ -342,7 +326,7 @@ with tab_table:
             data=csv_data,
             file_name=f"General_Ledger_Filtered_{datetime.date.today()}.csv",
             mime="text/csv",
-            **w_kwargs
+            use_container_width=True
         )
         
     with exp_col3:
@@ -359,7 +343,7 @@ with tab_table:
             data=excel_data,
             file_name=f"General_Ledger_Filtered_{datetime.date.today()}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            **w_kwargs
+            use_container_width=True
         )
 
     st.dataframe(
@@ -376,9 +360,9 @@ with tab_table:
             "credit": st.column_config.NumberColumn("Credit (₹)", format="₹ %.2f"),
             "net_amount": st.column_config.NumberColumn("Net Amount (₹)", format="₹ %.2f")
         },
+        use_container_width=True,
         hide_index=True,
-        height=550,
-        **w_kwargs
+        height=550
     )
 
 
@@ -402,9 +386,9 @@ with tab_summary:
                 "Total_Credit": st.column_config.NumberColumn("Total Credit (₹)", format="₹ %.2f"),
                 "Net_Balance": st.column_config.NumberColumn("Net Balance (₹)", format="₹ %.2f"),
             },
+            use_container_width=True,
             hide_index=True,
-            height=450,
-            **w_kwargs
+            height=450
         )
     else:
         st.info("No records available to summarize.")
