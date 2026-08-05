@@ -4,8 +4,24 @@ import sys
 import asyncio
 import datetime
 import warnings
-import pandas as pd
-import streamlit as st
+
+# -----------------------------------------------------------------------------
+# MONKEY-PATCH STARLETTE GZIP RESPONDER (Fixes Streamlit Cloud Starlette >=0.40.0 TypeError)
+# -----------------------------------------------------------------------------
+try:
+    import starlette.middleware.gzip
+    _orig_gzip_init = starlette.middleware.gzip.GZipResponder.__init__
+    
+    def _patched_gzip_init(self, app, minimum_size=500, compresslevel=9, **kwargs):
+        try:
+            _orig_gzip_init(self, app, minimum_size=minimum_size, compresslevel=compresslevel, **kwargs)
+        except TypeError:
+            kwargs.setdefault('thread_minimum_size', minimum_size)
+            _orig_gzip_init(self, app, minimum_size=minimum_size, compresslevel=compresslevel, **kwargs)
+
+    starlette.middleware.gzip.GZipResponder.__init__ = _patched_gzip_init
+except Exception:
+    pass
 
 # Ensure asyncio event loop is set for Python 3.14 main thread
 try:
@@ -13,6 +29,9 @@ try:
 except RuntimeError:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+
+import pandas as pd
+import streamlit as st
 
 # -----------------------------------------------------------------------------
 # 1. PAGE CONFIG (MUST BE THE VERY FIRST STREAMLIT COMMAND IN APP.PY)
