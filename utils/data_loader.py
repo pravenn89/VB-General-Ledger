@@ -1,6 +1,8 @@
 import io
 import os
 import glob
+import json
+import urllib.request
 import pandas as pd
 import streamlit as st
 
@@ -10,7 +12,11 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Absolute path to Data directory
 DEFAULT_DATA_DIR = os.path.join(BASE_DIR, "Data")
 
-# Hardcoded fallbacks if user moved app or running in different environment
+# GitHub Repository details for remote auto-loading
+GITHUB_REPO_OWNER = "pravenn89"
+GITHUB_REPO_NAME = "VB-General-Ledger"
+GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/contents/Data"
+
 FALLBACK_DATA_DIRS = [
     DEFAULT_DATA_DIR,
     os.path.join(BASE_DIR, "data"),
@@ -123,16 +129,85 @@ def load_single_excel(file_source, source_name: str) -> pd.DataFrame:
 def parse_single_uploaded_file_cached(file_name: str, file_bytes: bytes) -> pd.DataFrame:
     """
     Cache parsing of an individual uploaded Excel file by its name and raw bytes content.
-    This prevents re-parsing uploaded files on UI interactions.
     """
     buffer = io.BytesIO(file_bytes)
     return load_single_excel(buffer, file_name)
 
 
+@st.cache_data(show_spinner="Fetching ledger reports directly from GitHub repository...")
+def load_github_ledger_data_cached():
+    """
+    Fetch and parse all General Ledger Excel reports directly from the GitHub repository Data/ folder.
+    """
+    dfs = []
+    processed_files = []
+    errors = []
+    
+    try:
+        req = urllib.request.Request(
+            GITHUB_API_URL,
+            headers={'User-Agent': 'Mozilla/5.0'}
+        )
+        with urllib.request.urlopen(req) as response:
+            contents = json.loads(response.read().decode())
+            
+        excel_items = [item for item in contents if item['name'].endswith(('.xlsx', '.xls')) and not item['name'].startswith('~$')]
+        
+        for idx, item in enumerate(excel_items):
+            download_url = item.get('download_url')
+            file_name = item.get('name')
+            if download_url:
+                try:
+                    file_req = urllib.request.Request(download_url, headers={'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(file_req) as file_res:
+                        file_bytes = file_res.read()
+                    buffer = io.BytesIO(file_bytes)
+                    sub_df = load_single_excel(buffer, file_name)
+                    if not sub_df.empty:
+                        dfs.append(sub_df)
+                        processed_files.append(file_name)
+                except Exception as ex:
+                    errors.append(f"Error fetching {file_name} from GitHub: {str(ex)}")
+
+    except Exception as e:
+        errors.append(f"Failed to query GitHub repository: {str(e)}")
+
+    if not dfs:
+        empty_cols = [
+            'date', 'account_name', 'transaction_details', 'transaction_type', 
+            'reference_number', 'entity_number', 'debit', 'credit', 'net_amount', 
+            'contact_id', 'account_id', 'branch_name', '_source_file'
+        ]
+        empty_df = pd.DataFrame(columns=empty_cols)
+        return empty_df, {
+            'files_count': 0,
+            'total_rows': 0,
+            'unique_rows': 0,
+            'processed_files': [],
+            'errors': errors
+        }
+
+    combined_df = pd.concat(dfs, ignore_index=True)
+    total_rows = len(combined_df)
+    dedup_cols = [c for c in combined_df.columns if c != '_source_file']
+    combined_df = combined_df.drop_duplicates(subset=dedup_cols).reset_index(drop=True)
+    if 'date' in combined_df.columns:
+        combined_df = combined_df.sort_values(by='date', ascending=True).reset_index(drop=True)
+        
+    stats = {
+        'files_count': len(processed_files),
+        'total_rows': total_rows,
+        'unique_rows': len(combined_df),
+        'processed_files': processed_files,
+        'errors': errors
+    }
+    return combined_df, stats
+
+
 @st.cache_data(show_spinner="Scanning and loading General Ledger Excel files...")
 def load_ledger_data_cached(folder_path: str = None):
     """
-    Internal cached function to ingest, clean, aggregate, and deduplicate ledger files.
+    Internal cached function to ingest, clean, aggregate, and deduplicate local folder ledger files.
     """
     dfs = []
     processed_files = []
@@ -189,23 +264,24 @@ def load_ledger_data_cached(folder_path: str = None):
     return combined_df, stats
 
 
-def load_ledger_data(folder_path: str = None, uploaded_files=None):
+def load_ledger_data(mode: str = "GitHub Repository", folder_path: str = None, uploaded_files=None):
     """
-    Public data loading entry point handling directory search or Streamlit uploaded files with caching.
+    Public data loading entry point handling GitHub auto-load, Local Directory, or Streamlit uploaded files.
     """
-    if uploaded_files:
+    if mode == "GitHub Repository":
+        return load_github_ledger_data_cached()
+
+    if mode == "Upload Excel Files" and uploaded_files:
         dfs = []
         processed_files = []
         errors = []
         
-        # Show parsing progress indicator
         progress_text = f"Parsing {len(uploaded_files)} uploaded file(s)..."
         progress_bar = st.sidebar.progress(0, text=progress_text)
         
         for idx, file_obj in enumerate(uploaded_files):
             filename = file_obj.name
             try:
-                # Read raw bytes so Streamlit can cache by (filename, bytes)
                 file_bytes = file_obj.getvalue()
                 sub_df = parse_single_uploaded_file_cached(filename, file_bytes)
                 if not sub_df.empty:
@@ -214,7 +290,6 @@ def load_ledger_data(folder_path: str = None, uploaded_files=None):
             except Exception as e:
                 errors.append(f"Error reading {filename}: {str(e)}")
             
-            # Update progress bar
             progress_bar.progress((idx + 1) / len(uploaded_files), text=f"Processed {idx + 1}/{len(uploaded_files)} files")
 
         progress_bar.empty()
@@ -248,7 +323,7 @@ def load_ledger_data(folder_path: str = None, uploaded_files=None):
             'errors': errors
         }
 
-    # Folder mode
+    # Local Directory mode
     target_dir = folder_path if folder_path else get_default_data_dir()
     return load_ledger_data_cached(folder_path=target_dir)
 

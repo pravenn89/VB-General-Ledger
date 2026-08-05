@@ -83,11 +83,12 @@ st.markdown("""
 st.sidebar.image("https://img.icons8.com/color/96/general-ledger.png", width=64)
 st.sidebar.title("Ledger Settings & Filters")
 
-# Mode selector: Folder vs File Upload
+# Mode selector: GitHub vs Folder vs File Upload
 data_source_mode = st.sidebar.radio(
     "Data Source Mode",
-    ["Local Directory", "Upload Excel Files"],
-    help="Select whether to scan a folder on disk or upload files manually."
+    ["GitHub Repository (Auto-Load)", "Local Directory", "Upload Excel Files"],
+    index=0,
+    help="Select how to load the General Ledger Excel reports."
 )
 
 uploaded_files = None
@@ -103,7 +104,7 @@ if data_source_mode == "Local Directory":
     if st.sidebar.button("🔄 Refresh / Reload Folder"):
         st.cache_data.clear()
         st.rerun()
-else:
+elif data_source_mode == "Upload Excel Files":
     uploaded_files = st.sidebar.file_uploader(
         "Upload General Ledger Excel Files",
         type=["xlsx", "xls"],
@@ -111,7 +112,11 @@ else:
     )
 
 # Load raw ledger data
-df_raw, load_stats = load_ledger_data(folder_path=folder_path, uploaded_files=uploaded_files)
+df_raw, load_stats = load_ledger_data(
+    mode=data_source_mode, 
+    folder_path=folder_path, 
+    uploaded_files=uploaded_files
+)
 
 # Sidebar Folder Scanner Status Card
 st.sidebar.markdown("---")
