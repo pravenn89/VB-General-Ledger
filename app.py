@@ -112,7 +112,7 @@ uploaded_files = None
 folder_path = None
 
 if data_source_mode == "Local Directory":
-    default_dir = get_default_data_dir()
+    default_dir = "./Data"
     folder_path = st.sidebar.text_input(
         "Data Folder Path",
         value=default_dir,

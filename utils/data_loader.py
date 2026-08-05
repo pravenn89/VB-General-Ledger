@@ -5,19 +5,49 @@ import streamlit as st
 
 # Default lookup directories for General Ledger Excel files
 DEFAULT_DATA_DIRS = [
-    r"C:\Users\rtrpr\.gemini\antigravity\scratch\VB General Ledger\Data",
     "./Data",
     "./data",
     "Data",
-    "data"
+    "data",
+    r"C:\Users\rtrpr\.gemini\antigravity\scratch\VB General Ledger\Data"
 ]
 
 def get_default_data_dir() -> str:
-    """Find the first existing data directory from default options."""
+    """Find the first existing data directory from default options, returning clean relative path if possible."""
     for path in DEFAULT_DATA_DIRS:
         if os.path.exists(path) and os.path.isdir(path):
-            return os.path.abspath(path)
-    return os.path.abspath("./Data")
+            return path
+    return "./Data"
+
+
+def find_excel_files(folder_path: str) -> list:
+    """
+    Smartly locate Excel files in folder_path, its subfolders (like Data/), or recursively.
+    """
+    if not folder_path or not os.path.exists(folder_path):
+        return []
+        
+    # 1. Direct search in folder_path
+    files = glob.glob(os.path.join(folder_path, "*.xlsx")) + glob.glob(os.path.join(folder_path, "*.xls"))
+    # Filter out temporary Excel locking files (starting with ~$)
+    files = [f for f in files if not os.path.basename(f).startswith("~$")]
+    if files:
+        return sorted(files)
+        
+    # 2. Check for Data/data subfolder inside folder_path
+    for sub in ["Data", "data", "DATA"]:
+        sub_path = os.path.join(folder_path, sub)
+        if os.path.exists(sub_path):
+            sub_files = glob.glob(os.path.join(sub_path, "*.xlsx")) + glob.glob(os.path.join(sub_path, "*.xls"))
+            sub_files = [f for f in sub_files if not os.path.basename(f).startswith("~$")]
+            if sub_files:
+                return sorted(sub_files)
+                
+    # 3. Fallback: Recursive search in all subdirectories
+    rec_files = glob.glob(os.path.join(folder_path, "**", "*.xlsx"), recursive=True) + \
+                glob.glob(os.path.join(folder_path, "**", "*.xls"), recursive=True)
+    rec_files = [f for f in rec_files if not os.path.basename(f).startswith("~$")]
+    return sorted(rec_files)
 
 
 def load_single_excel(file_source, source_name: str) -> pd.DataFrame:
@@ -25,7 +55,6 @@ def load_single_excel(file_source, source_name: str) -> pd.DataFrame:
     Read a single Excel file skipping title row (header=1).
     Clean column names and format datatypes.
     """
-    # Read Excel skipping row 0 (title metadata)
     df = pd.read_excel(file_source, header=1)
     
     if df.empty:
@@ -65,7 +94,7 @@ def load_single_excel(file_source, source_name: str) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner="Scanning and loading General Ledger Excel files...")
-def load_ledger_data_cached(folder_path: str = None, uploaded_files_meta: list = None):
+def load_ledger_data_cached(folder_path: str = None):
     """
     Internal cached function to ingest, clean, aggregate, and deduplicate ledger files.
     """
@@ -73,20 +102,19 @@ def load_ledger_data_cached(folder_path: str = None, uploaded_files_meta: list =
     processed_files = []
     errors = []
     
-    if folder_path and os.path.exists(folder_path):
-        excel_files = glob.glob(os.path.join(folder_path, "*.xlsx")) + glob.glob(os.path.join(folder_path, "*.xls"))
-        for filepath in sorted(excel_files):
-            filename = os.path.basename(filepath)
-            try:
-                sub_df = load_single_excel(filepath, filename)
-                if not sub_df.empty:
-                    dfs.append(sub_df)
-                    processed_files.append(filename)
-            except Exception as e:
-                errors.append(f"Error reading {filename}: {str(e)}")
+    excel_files = find_excel_files(folder_path) if folder_path else []
+    
+    for filepath in excel_files:
+        filename = os.path.basename(filepath)
+        try:
+            sub_df = load_single_excel(filepath, filename)
+            if not sub_df.empty:
+                dfs.append(sub_df)
+                processed_files.append(filename)
+        except Exception as e:
+            errors.append(f"Error reading {filename}: {str(e)}")
 
     if not dfs:
-        # Return empty df with expected structure
         empty_cols = [
             'date', 'account_name', 'transaction_details', 'transaction_type', 
             'reference_number', 'entity_number', 'debit', 'credit', 'net_amount', 
@@ -105,12 +133,12 @@ def load_ledger_data_cached(folder_path: str = None, uploaded_files_meta: list =
     combined_df = pd.concat(dfs, ignore_index=True)
     total_rows = len(combined_df)
     
-    # Deduplicate identical records (excluding _source_file if needed, or including all columns)
+    # Deduplicate identical records
     dedup_cols = [c for c in combined_df.columns if c != '_source_file']
     combined_df = combined_df.drop_duplicates(subset=dedup_cols).reset_index(drop=True)
     unique_rows = len(combined_df)
     
-    # Sort by date descending by default
+    # Sort by date ascending by default
     if 'date' in combined_df.columns:
         combined_df = combined_df.sort_values(by='date', ascending=True).reset_index(drop=True)
         
