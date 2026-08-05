@@ -9,13 +9,6 @@ venv/
 ENV/
 .venv
 
-# Data files (Excel/CSV)
-Data/
-data/
-*.xlsx
-*.xls
-*.csv
-
 # Streamlit
 .streamlit/
 
