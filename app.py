@@ -1,9 +1,12 @@
 import io
 import os
 import sys
+import gc
 import asyncio
 import datetime
 import warnings
+import pandas as pd
+import streamlit as st
 
 # -----------------------------------------------------------------------------
 # MONKEY-PATCH STARLETTE GZIP RESPONDER (Fixes Streamlit Cloud Starlette >=0.40.0 TypeError)
@@ -30,9 +33,6 @@ except RuntimeError:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-import pandas as pd
-import streamlit as st
-
 # -----------------------------------------------------------------------------
 # 1. PAGE CONFIG (MUST BE THE VERY FIRST STREAMLIT COMMAND IN APP.PY)
 # -----------------------------------------------------------------------------
@@ -57,6 +57,20 @@ from utils.data_loader import (
     extract_unique_vendors, 
     get_default_data_dir
 )
+
+
+# Cached helper to build Excel files lazily without bloating memory on every rerun
+@st.cache_data(show_spinner=False, max_entries=5)
+def convert_df_to_excel(df: pd.DataFrame) -> bytes:
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Filtered_Ledger')
+    return output.getvalue()
+
+
+@st.cache_data(show_spinner=False, max_entries=5)
+def convert_df_to_csv(df: pd.DataFrame) -> bytes:
+    return df.to_csv(index=False).encode('utf-8')
 
 
 # -----------------------------------------------------------------------------
@@ -258,43 +272,46 @@ if not df_raw.empty:
 # -----------------------------------------------------------------------------
 # 5. FILTER EXECUTION LOGIC
 # -----------------------------------------------------------------------------
-df_filtered = df_raw.copy()
+df_filtered = df_raw
 
 if not df_raw.empty:
+    # Apply filters iteratively
+    mask = pd.Series(True, index=df_raw.index)
+    
     # Date filtering
     if selected_date_range and isinstance(selected_date_range, (tuple, list)):
         if len(selected_date_range) == 2:
             start_d, end_d = selected_date_range
             start_ts = pd.to_datetime(start_d)
             end_ts = pd.to_datetime(end_d) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-            df_filtered = df_filtered[
-                (df_filtered['date'] >= start_ts) & (df_filtered['date'] <= end_ts)
-            ]
+            mask &= (df_raw['date'] >= start_ts) & (df_raw['date'] <= end_ts)
         elif len(selected_date_range) == 1:
             start_d = selected_date_range[0]
             start_ts = pd.to_datetime(start_d)
-            df_filtered = df_filtered[df_filtered['date'] >= start_ts]
+            mask &= (df_raw['date'] >= start_ts)
 
     # Branch filtering
     if selected_branches:
-        df_filtered = df_filtered[df_filtered['branch_name'].isin(selected_branches)]
+        mask &= df_raw['branch_name'].isin(selected_branches)
 
     # Transaction type filtering
     if selected_types:
-        df_filtered = df_filtered[df_filtered['transaction_type'].isin(selected_types)]
+        mask &= df_raw['transaction_type'].isin(selected_types)
 
-    # Vendor filtering using transaction_details (and contact_id fallback)
+    # Vendor filtering
     if vendor_mode == "Select Vendor(s)" and selected_vendors:
-        df_filtered = df_filtered[
-            df_filtered['transaction_details'].isin(selected_vendors) | 
-            df_filtered['contact_id'].isin(selected_vendors)
-        ]
+        mask &= (df_raw['transaction_details'].isin(selected_vendors) | df_raw['contact_id'].isin(selected_vendors))
     elif vendor_mode == "Keyword Search" and vendor_keyword.strip():
         kw = vendor_keyword.strip().lower()
-        match_details = df_filtered['transaction_details'].str.lower().str.contains(kw, na=False)
-        match_contact = df_filtered['contact_id'].str.lower().str.contains(kw, na=False)
-        match_acc = df_filtered['account_name'].str.lower().str.contains(kw, na=False)
-        df_filtered = df_filtered[match_details | match_contact | match_acc]
+        match_details = df_raw['transaction_details'].str.lower().str.contains(kw, na=False)
+        match_contact = df_raw['contact_id'].str.lower().str.contains(kw, na=False)
+        match_acc = df_raw['account_name'].str.lower().str.contains(kw, na=False)
+        mask &= (match_details | match_contact | match_acc)
+
+    df_filtered = df_raw[mask]
+    
+    # Force Garbage Collection to keep memory usage low
+    gc.collect()
 
 
 # -----------------------------------------------------------------------------
@@ -339,37 +356,34 @@ with tab_table:
     exp_col1, exp_col2, exp_col3 = st.columns([2, 1, 1])
     
     with exp_col1:
-        st.markdown(f"Displaying **{len(df_filtered):,}** of **{len(df_raw):,}** transactions")
+        if len(df_filtered) > 10000:
+            st.markdown(f"Displaying top **10,000** of **{len(df_filtered):,}** matching transactions (Full dataset available in downloads)")
+        else:
+            st.markdown(f"Displaying **{len(df_filtered):,}** of **{len(df_raw):,}** transactions")
         
     with exp_col2:
-        csv_data = df_filtered[present_cols].to_csv(index=False).encode('utf-8')
         st.download_button(
             label="📥 Download CSV",
-            data=csv_data,
+            data=convert_df_to_csv(df_filtered[present_cols]),
             file_name=f"General_Ledger_Filtered_{datetime.date.today()}.csv",
             mime="text/csv",
             use_container_width=True
         )
         
     with exp_col3:
-        if len(df_filtered) > 150000:
-            st.caption("⚠️ Large dataset (>150k rows). Excel build may take a moment.")
-            
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_filtered[present_cols].to_excel(writer, index=False, sheet_name='Filtered_Ledger')
-        excel_data = output.getvalue()
-        
         st.download_button(
             label="📊 Download Excel (.xlsx)",
-            data=excel_data,
+            data=convert_df_to_excel(df_filtered[present_cols]),
             file_name=f"General_Ledger_Filtered_{datetime.date.today()}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
 
+    # Slice top 10,000 rows for dataframe UI rendering to keep memory & DOM rendering ultra fast
+    df_display = df_filtered[present_cols].head(10000)
+
     st.dataframe(
-        df_filtered[present_cols],
+        df_display,
         column_config={
             "date": st.column_config.DateColumn("Date", format="DD/MM/YYYY"),
             "branch_name": st.column_config.TextColumn("Branch"),
