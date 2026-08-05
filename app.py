@@ -103,10 +103,10 @@ st.markdown("""
 st.sidebar.image("https://img.icons8.com/color/96/general-ledger.png", width=64)
 st.sidebar.title("Ledger Settings & Filters")
 
-# Mode selector: GitHub vs Folder vs File Upload
+# Mode selector: Local Repository vs Upload vs Remote API
 data_source_mode = st.sidebar.radio(
     "Data Source Mode",
-    ["GitHub Repository (Auto-Load)", "Local Directory", "Upload Excel Files"],
+    ["Local / Repository Data (Recommended)", "Upload Excel Files", "GitHub API Stream (Remote)"],
     index=0,
     help="Select how to load the General Ledger Excel reports."
 )
@@ -114,7 +114,7 @@ data_source_mode = st.sidebar.radio(
 uploaded_files = None
 folder_path = None
 
-if data_source_mode == "Local Directory":
+if data_source_mode == "Local / Repository Data (Recommended)":
     default_dir = get_default_data_dir()
     folder_path = st.sidebar.text_input(
         "Data Folder Path",
@@ -131,12 +131,27 @@ elif data_source_mode == "Upload Excel Files":
         accept_multiple_files=True
     )
 
-# Load raw ledger data
-df_raw, load_stats = load_ledger_data(
-    mode=data_source_mode, 
-    folder_path=folder_path, 
-    uploaded_files=uploaded_files
-)
+# Load raw ledger data safely
+try:
+    df_raw, load_stats = load_ledger_data(
+        mode=data_source_mode, 
+        folder_path=folder_path, 
+        uploaded_files=uploaded_files
+    )
+except Exception as e:
+    empty_cols = [
+        'date', 'account_name', 'transaction_details', 'transaction_type', 
+        'reference_number', 'entity_number', 'debit', 'credit', 'net_amount', 
+        'contact_id', 'account_id', 'branch_name', '_source_file'
+    ]
+    df_raw = pd.DataFrame(columns=empty_cols)
+    load_stats = {
+        'files_count': 0,
+        'total_rows': 0,
+        'unique_rows': 0,
+        'processed_files': [],
+        'errors': [f"Initialization Warning: {str(e)}"]
+    }
 
 # Sidebar Folder Scanner Status Card
 st.sidebar.markdown("---")

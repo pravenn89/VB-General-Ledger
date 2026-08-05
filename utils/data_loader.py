@@ -4,6 +4,7 @@ import glob
 import json
 import time
 import urllib.request
+import urllib.error
 import pandas as pd
 import streamlit as st
 
@@ -25,13 +26,13 @@ FALLBACK_DATA_DIRS = [
     r"C:\Users\rtrpr\.gemini\antigravity\scratch\VB General Ledger\data"
 ]
 
-def fetch_url_with_retry(url: str, retries: int = 3, backoff: float = 1.0) -> bytes:
+def fetch_url_with_retry(url: str, retries: int = 2, backoff: float = 0.5) -> bytes:
     """Helper to fetch URL content with automatic retries on network hiccups."""
     last_exception = None
     for attempt in range(retries):
         try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=35) as res:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 StreamlitApp/1.0'})
+            with urllib.request.urlopen(req, timeout=15) as res:
                 return res.read()
         except Exception as e:
             last_exception = e
@@ -47,52 +48,45 @@ def get_default_data_dir() -> str:
     return DEFAULT_DATA_DIR
 
 
-def find_excel_files(folder_path: str) -> list:
+def find_excel_files(folder_path: str = None) -> list:
     """
-    Smartly locate Excel files in folder_path (resolving relative paths against BASE_DIR),
-    its subfolders (like Data/), or recursively.
+    Smartly locate Excel files in folder_path, BASE_DIR/Data, or recursively.
     """
-    if not folder_path or not folder_path.strip():
-        target_path = get_default_data_dir()
-    else:
-        target_path = folder_path.strip()
-        if not os.path.isabs(target_path):
-            target_path = os.path.abspath(os.path.join(BASE_DIR, target_path))
+    search_paths = []
+    
+    if folder_path and folder_path.strip():
+        tp = folder_path.strip()
+        if not os.path.isabs(tp):
+            tp = os.path.abspath(os.path.join(BASE_DIR, tp))
+        search_paths.append(tp)
+        
+    search_paths.extend(FALLBACK_DATA_DIRS)
+    
+    for target_path in search_paths:
+        if not os.path.exists(target_path):
+            continue
             
-    if not os.path.exists(target_path):
-        target_path = get_default_data_dir()
-        
-    if not os.path.exists(target_path):
-        return []
-        
-    # 1. Direct search in target_path
-    files = glob.glob(os.path.join(target_path, "*.xlsx")) + glob.glob(os.path.join(target_path, "*.xls"))
-    files = [f for f in files if not os.path.basename(f).startswith("~$")]
-    if files:
-        return sorted(files)
-        
-    # 2. Check for Data/data subfolder inside target_path
-    for sub in ["Data", "data", "DATA"]:
-        sub_path = os.path.join(target_path, sub)
-        if os.path.exists(sub_path):
-            sub_files = glob.glob(os.path.join(sub_path, "*.xlsx")) + glob.glob(os.path.join(sub_path, "*.xls"))
-            sub_files = [f for f in sub_files if not os.path.basename(f).startswith("~$")]
-            if sub_files:
-                return sorted(sub_files)
-                
-    # 3. Fallback: Recursive search in all subdirectories
-    rec_files = glob.glob(os.path.join(target_path, "**", "*.xlsx"), recursive=True) + \
-                glob.glob(os.path.join(target_path, "**", "*.xls"), recursive=True)
-    rec_files = [f for f in rec_files if not os.path.basename(f).startswith("~$")]
-    if rec_files:
-        return sorted(rec_files)
-
-    # 4. Ultimate fallback: Search default project Data directory
-    default_fallback = get_default_data_dir()
-    if target_path != default_fallback and os.path.exists(default_fallback):
-        fb_files = glob.glob(os.path.join(default_fallback, "*.xlsx")) + glob.glob(os.path.join(default_fallback, "*.xls"))
-        fb_files = [f for f in fb_files if not os.path.basename(f).startswith("~$")]
-        return sorted(fb_files)
+        # 1. Direct search
+        files = glob.glob(os.path.join(target_path, "*.xlsx")) + glob.glob(os.path.join(target_path, "*.xls"))
+        files = [f for f in files if not os.path.basename(f).startswith("~$")]
+        if files:
+            return sorted(files)
+            
+        # 2. Subfolder search
+        for sub in ["Data", "data", "DATA"]:
+            sub_path = os.path.join(target_path, sub)
+            if os.path.exists(sub_path):
+                sub_files = glob.glob(os.path.join(sub_path, "*.xlsx")) + glob.glob(os.path.join(sub_path, "*.xls"))
+                sub_files = [f for f in sub_files if not os.path.basename(f).startswith("~$")]
+                if sub_files:
+                    return sorted(sub_files)
+                    
+        # 3. Recursive search
+        rec_files = glob.glob(os.path.join(target_path, "**", "*.xlsx"), recursive=True) + \
+                    glob.glob(os.path.join(target_path, "**", "*.xls"), recursive=True)
+        rec_files = [f for f in rec_files if not os.path.basename(f).startswith("~$")]
+        if rec_files:
+            return sorted(rec_files)
 
     return []
 
@@ -149,70 +143,7 @@ def parse_single_uploaded_file_cached(file_name: str, file_bytes: bytes) -> pd.D
     return load_single_excel(buffer, file_name)
 
 
-@st.cache_data(show_spinner="Fetching ledger reports directly from GitHub repository...")
-def load_github_ledger_data_cached():
-    """
-    Fetch and parse all General Ledger Excel reports directly from the GitHub repository Data/ folder.
-    """
-    dfs = []
-    processed_files = []
-    errors = []
-    
-    try:
-        api_bytes = fetch_url_with_retry(GITHUB_API_URL, retries=3)
-        contents = json.loads(api_bytes.decode('utf-8'))
-        excel_items = [item for item in contents if item['name'].endswith(('.xlsx', '.xls')) and not item['name'].startswith('~$')]
-        
-        for idx, item in enumerate(excel_items):
-            download_url = item.get('download_url')
-            file_name = item.get('name')
-            if download_url:
-                try:
-                    file_bytes = fetch_url_with_retry(download_url, retries=3)
-                    buffer = io.BytesIO(file_bytes)
-                    sub_df = load_single_excel(buffer, file_name)
-                    if not sub_df.empty:
-                        dfs.append(sub_df)
-                        processed_files.append(file_name)
-                except Exception as ex:
-                    errors.append(f"Error fetching {file_name} from GitHub: {str(ex)}")
-
-    except Exception as e:
-        errors.append(f"Failed to query GitHub repository: {str(e)}")
-
-    if not dfs:
-        empty_cols = [
-            'date', 'account_name', 'transaction_details', 'transaction_type', 
-            'reference_number', 'entity_number', 'debit', 'credit', 'net_amount', 
-            'contact_id', 'account_id', 'branch_name', '_source_file'
-        ]
-        empty_df = pd.DataFrame(columns=empty_cols)
-        return empty_df, {
-            'files_count': 0,
-            'total_rows': 0,
-            'unique_rows': 0,
-            'processed_files': [],
-            'errors': errors
-        }
-
-    combined_df = pd.concat(dfs, ignore_index=True)
-    total_rows = len(combined_df)
-    dedup_cols = [c for c in combined_df.columns if c != '_source_file']
-    combined_df = combined_df.drop_duplicates(subset=dedup_cols).reset_index(drop=True)
-    if 'date' in combined_df.columns:
-        combined_df = combined_df.sort_values(by='date', ascending=True).reset_index(drop=True)
-        
-    stats = {
-        'files_count': len(processed_files),
-        'total_rows': total_rows,
-        'unique_rows': len(combined_df),
-        'processed_files': processed_files,
-        'errors': errors
-    }
-    return combined_df, stats
-
-
-@st.cache_data(show_spinner="Scanning and loading General Ledger Excel files...")
+@st.cache_data(show_spinner="Loading General Ledger Excel files...")
 def load_ledger_data_cached(folder_path: str = None):
     """
     Internal cached function to ingest, clean, aggregate, and deduplicate local folder ledger files.
@@ -272,11 +203,79 @@ def load_ledger_data_cached(folder_path: str = None):
     return combined_df, stats
 
 
-def load_ledger_data(mode: str = "GitHub Repository (Auto-Load)", folder_path: str = None, uploaded_files=None):
+@st.cache_data(show_spinner="Fetching ledger reports from GitHub remote...")
+def load_github_ledger_data_cached():
     """
-    Public data loading entry point handling GitHub auto-load, Local Directory, or Streamlit uploaded files.
+    Fetch and parse all General Ledger Excel reports directly from GitHub raw API with safe error handling.
     """
-    if "GitHub" in mode:
+    dfs = []
+    processed_files = []
+    errors = []
+    
+    try:
+        api_bytes = fetch_url_with_retry(GITHUB_API_URL, retries=2)
+        contents = json.loads(api_bytes.decode('utf-8'))
+        excel_items = [item for item in contents if item['name'].endswith(('.xlsx', '.xls')) and not item['name'].startswith('~$')]
+        
+        for item in excel_items:
+            download_url = item.get('download_url')
+            file_name = item.get('name')
+            if download_url:
+                try:
+                    file_bytes = fetch_url_with_retry(download_url, retries=2)
+                    buffer = io.BytesIO(file_bytes)
+                    sub_df = load_single_excel(buffer, file_name)
+                    if not sub_df.empty:
+                        dfs.append(sub_df)
+                        processed_files.append(file_name)
+                except Exception as ex:
+                    errors.append(f"Error fetching {file_name} from GitHub: {str(ex)}")
+
+    except urllib.error.HTTPError as he:
+        if he.code == 403:
+            errors.append("GitHub API rate limit exceeded for unauthenticated requests. Please use Local / Repository Data mode.")
+        else:
+            errors.append(f"GitHub API Error: {he.code} - {he.reason}")
+    except Exception as e:
+        errors.append(f"Failed to query GitHub repository: {str(e)}")
+
+    if not dfs:
+        empty_cols = [
+            'date', 'account_name', 'transaction_details', 'transaction_type', 
+            'reference_number', 'entity_number', 'debit', 'credit', 'net_amount', 
+            'contact_id', 'account_id', 'branch_name', '_source_file'
+        ]
+        empty_df = pd.DataFrame(columns=empty_cols)
+        return empty_df, {
+            'files_count': 0,
+            'total_rows': 0,
+            'unique_rows': 0,
+            'processed_files': [],
+            'errors': errors
+        }
+
+    combined_df = pd.concat(dfs, ignore_index=True)
+    total_rows = len(combined_df)
+    dedup_cols = [c for c in combined_df.columns if c != '_source_file']
+    combined_df = combined_df.drop_duplicates(subset=dedup_cols).reset_index(drop=True)
+    if 'date' in combined_df.columns:
+        combined_df = combined_df.sort_values(by='date', ascending=True).reset_index(drop=True)
+        
+    stats = {
+        'files_count': len(processed_files),
+        'total_rows': total_rows,
+        'unique_rows': len(combined_df),
+        'processed_files': processed_files,
+        'errors': errors
+    }
+    return combined_df, stats
+
+
+def load_ledger_data(mode: str = "Local / Repository Data", folder_path: str = None, uploaded_files=None):
+    """
+    Public data loading entry point handling Local/Repository files, GitHub API stream, or Uploaded files.
+    """
+    if "GitHub API" in mode:
         return load_github_ledger_data_cached()
 
     if mode == "Upload Excel Files" and uploaded_files:
@@ -331,7 +330,7 @@ def load_ledger_data(mode: str = "GitHub Repository (Auto-Load)", folder_path: s
             'errors': errors
         }
 
-    # Local Directory mode
+    # Default: Local / Repository Data mode
     target_dir = folder_path if folder_path else get_default_data_dir()
     return load_ledger_data_cached(folder_path=target_dir)
 
