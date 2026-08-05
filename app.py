@@ -209,10 +209,10 @@ if not df_raw.empty:
         placeholder="All Types"
     )
 
-    # Vendor Selector (contact_id)
+    # Vendor Selector (transaction_details)
     unique_vendors = extract_unique_vendors(df_raw)
     
-    st.sidebar.markdown("**Vendor Selection (`contact_id`)**")
+    st.sidebar.markdown("**Vendor Selection (`transaction_details`)**")
     vendor_mode = st.sidebar.radio(
         "Vendor Filter Method",
         ["All Vendors", "Select Vendor(s)", "Keyword Search"],
@@ -225,14 +225,14 @@ if not df_raw.empty:
     
     if vendor_mode == "Select Vendor(s)":
         selected_vendors = st.sidebar.multiselect(
-            "Search / Select Vendor (`contact_id`)",
+            "Search / Select Vendor (`transaction_details`)",
             options=unique_vendors,
-            placeholder="Type vendor contact_id..."
+            placeholder="Type vendor or transaction detail..."
         )
     elif vendor_mode == "Keyword Search":
         vendor_keyword = st.sidebar.text_input(
             "Vendor / Account Keyword Search",
-            placeholder="Enter vendor ID or account name..."
+            placeholder="Enter detail keyword or account name..."
         )
 
 
@@ -264,15 +264,18 @@ if not df_raw.empty:
     if selected_types:
         df_filtered = df_filtered[df_filtered['transaction_type'].isin(selected_types)]
 
-    # Vendor filtering
+    # Vendor filtering using transaction_details (and contact_id fallback)
     if vendor_mode == "Select Vendor(s)" and selected_vendors:
-        df_filtered = df_filtered[df_filtered['contact_id'].isin(selected_vendors)]
+        df_filtered = df_filtered[
+            df_filtered['transaction_details'].isin(selected_vendors) | 
+            df_filtered['contact_id'].isin(selected_vendors)
+        ]
     elif vendor_mode == "Keyword Search" and vendor_keyword.strip():
         kw = vendor_keyword.strip().lower()
+        match_details = df_filtered['transaction_details'].str.lower().str.contains(kw, na=False)
         match_contact = df_filtered['contact_id'].str.lower().str.contains(kw, na=False)
         match_acc = df_filtered['account_name'].str.lower().str.contains(kw, na=False)
-        match_details = df_filtered['transaction_details'].str.lower().str.contains(kw, na=False)
-        df_filtered = df_filtered[match_contact | match_acc | match_details]
+        df_filtered = df_filtered[match_details | match_contact | match_acc]
 
 
 # -----------------------------------------------------------------------------
@@ -367,9 +370,10 @@ with tab_table:
 
 
 with tab_summary:
-    st.subheader("Aggregated Summary by Vendor & Branch")
-    if not df_filtered.empty and 'contact_id' in df_filtered.columns:
-        summary_df = df_filtered.groupby(['contact_id', 'branch_name'], as_index=False).agg(
+    st.subheader("Aggregated Summary by Vendor / Details & Branch")
+    group_col = 'transaction_details' if 'transaction_details' in df_filtered.columns else 'contact_id'
+    if not df_filtered.empty and group_col in df_filtered.columns:
+        summary_df = df_filtered.groupby([group_col, 'branch_name'], as_index=False).agg(
             Transactions=('net_amount', 'count'),
             Total_Debit=('debit', 'sum'),
             Total_Credit=('credit', 'sum'),
@@ -379,7 +383,7 @@ with tab_summary:
         st.dataframe(
             summary_df,
             column_config={
-                "contact_id": st.column_config.TextColumn("Vendor (`contact_id`)"),
+                group_col: st.column_config.TextColumn(f"Vendor / Details (`{group_col}`)"),
                 "branch_name": st.column_config.TextColumn("Branch"),
                 "Transactions": st.column_config.NumberColumn("Transactions Count"),
                 "Total_Debit": st.column_config.NumberColumn("Total Debit (₹)", format="₹ %.2f"),

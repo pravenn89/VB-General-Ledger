@@ -149,7 +149,6 @@ def load_ledger_data_cached(folder_path: str = None):
     Internal cached function to ingest, clean, aggregate, and deduplicate local folder ledger files.
     Prefers pre-compiled Parquet / compressed CSV files for instant crash-free loading on Streamlit Cloud.
     """
-    # 1. Fast Parquet / CSV.GZ Loader check
     check_dirs = [folder_path, DEFAULT_DATA_DIR, BASE_DIR]
     for d in check_dirs:
         if d and os.path.exists(d):
@@ -191,7 +190,7 @@ def load_ledger_data_cached(folder_path: str = None):
                 except Exception:
                     pass
 
-    # 2. Fallback to reading raw *.xlsx files
+    # Fallback to reading raw *.xlsx files
     dfs = []
     processed_files = []
     errors = []
@@ -227,12 +226,10 @@ def load_ledger_data_cached(folder_path: str = None):
     combined_df = pd.concat(dfs, ignore_index=True)
     total_rows = len(combined_df)
     
-    # Deduplicate identical records
     dedup_cols = [c for c in combined_df.columns if c != '_source_file']
     combined_df = combined_df.drop_duplicates(subset=dedup_cols).reset_index(drop=True)
     unique_rows = len(combined_df)
     
-    # Sort by date ascending by default
     if 'date' in combined_df.columns:
         combined_df = combined_df.sort_values(by='date', ascending=True).reset_index(drop=True)
         
@@ -381,10 +378,14 @@ def load_ledger_data(mode: str = "Local / Repository Data", folder_path: str = N
 
 def extract_unique_vendors(df: pd.DataFrame) -> list:
     """
-    Extract unique, non-blank vendor values from contact_id.
+    Extract unique, non-blank vendor names from transaction_details (and contact_id fallback).
     """
     vendors = set()
-    if 'contact_id' in df.columns:
+    if 'transaction_details' in df.columns:
+        valid_details = df['transaction_details'].dropna().astype(str).str.strip()
+        valid = valid_details[~valid_details.str.lower().isin(['', 'nan', 'none', 'nat', '-1', '0', 'null'])]
+        vendors.update(valid.tolist())
+    elif 'contact_id' in df.columns:
         valid_contacts = df['contact_id'].dropna().astype(str).str.strip()
         valid = valid_contacts[~valid_contacts.str.lower().isin(['', 'nan', 'none', 'nat', '-1', '0'])]
         vendors.update(valid.tolist())
