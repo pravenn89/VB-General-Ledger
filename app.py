@@ -1,8 +1,14 @@
 import io
 import os
+import sys
 import datetime
 import pandas as pd
 import streamlit as st
+
+# Ensure project root is in sys.path
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from utils.data_loader import (
     load_ledger_data, 
@@ -67,30 +73,6 @@ st.markdown("""
         font-weight: 700;
         color: #0F172A;
     }
-
-    /* Custom badge status */
-    .status-badge {
-        display: inline-block;
-        padding: 4px 12px;
-        border-radius: 12px;
-        font-size: 0.85rem;
-        font-weight: 600;
-        background-color: #E0F2FE;
-        color: #0369A1;
-        margin-bottom: 10px;
-    }
-    .status-badge-warn {
-        background-color: #FEF3C7;
-        color: #92400E;
-    }
-
-    /* Filter Card */
-    .filter-header {
-        font-size: 1.1rem;
-        font-weight: 600;
-        color: #1E293B;
-        margin-bottom: 10px;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -112,7 +94,7 @@ uploaded_files = None
 folder_path = None
 
 if data_source_mode == "Local Directory":
-    default_dir = "./Data"
+    default_dir = get_default_data_dir()
     folder_path = st.sidebar.text_input(
         "Data Folder Path",
         value=default_dir,
@@ -260,7 +242,6 @@ if not df_raw.empty:
 # -----------------------------------------------------------------------------
 # 5. DASHBOARD MAIN CONTENT
 # -----------------------------------------------------------------------------
-# Main Title & Subtitle
 st.markdown('<div class="app-title">VASANTA BHAVAN HOTELS INDIA (P) LTD</div>', unsafe_allow_html=True)
 st.markdown('<div class="app-subtitle">Multi-File General Ledger Aggregator & Vendor Transaction Explorer</div>', unsafe_allow_html=True)
 
@@ -287,27 +268,22 @@ st.markdown("<br>", unsafe_allow_html=True)
 # -----------------------------------------------------------------------------
 # 6. EXPORT BUTTONS & INTERACTIVE TABLE
 # -----------------------------------------------------------------------------
-# Create tabs for table view and aggregated view
 tab_table, tab_summary = st.tabs(["📋 Filtered Ledger Transactions", "📊 Vendor / Branch Summary"])
 
-# Display columns ordered logically
 display_columns = [
     'date', 'branch_name', 'contact_id', 'account_name', 
     'transaction_details', 'transaction_type', 'reference_number', 
     'debit', 'credit', 'net_amount'
 ]
-# Filter to existing columns
 present_cols = [c for c in display_columns if c in df_filtered.columns]
 
 with tab_table:
-    # Action bar for export buttons
     exp_col1, exp_col2, exp_col3 = st.columns([2, 1, 1])
     
     with exp_col1:
         st.markdown(f"Displaying **{len(df_filtered):,}** of **{len(df_raw):,}** transactions")
         
     with exp_col2:
-        # Download as CSV
         csv_data = df_filtered[present_cols].to_csv(index=False).encode('utf-8')
         st.download_button(
             label="📥 Download CSV",
@@ -318,7 +294,6 @@ with tab_table:
         )
         
     with exp_col3:
-        # Download as Excel (.xlsx)
         if len(df_filtered) > 150000:
             st.caption("⚠️ Large dataset (>150k rows). Excel build may take a moment.")
             
@@ -335,7 +310,6 @@ with tab_table:
             use_container_width=True
         )
 
-    # Render interactive DataFrame
     st.dataframe(
         df_filtered[present_cols],
         column_config={

@@ -3,40 +3,58 @@ import glob
 import pandas as pd
 import streamlit as st
 
-# Default lookup directories for General Ledger Excel files
-DEFAULT_DATA_DIRS = [
-    "./Data",
-    "./data",
-    "Data",
-    "data",
-    r"C:\Users\rtrpr\.gemini\antigravity\scratch\VB General Ledger\Data"
+# Base directory of the application (root directory containing app.py and utils/)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Absolute path to Data directory
+DEFAULT_DATA_DIR = os.path.join(BASE_DIR, "Data")
+
+# Hardcoded fallbacks if user moved app or running in different environment
+FALLBACK_DATA_DIRS = [
+    DEFAULT_DATA_DIR,
+    os.path.join(BASE_DIR, "data"),
+    r"C:\Users\rtrpr\.gemini\antigravity\scratch\VB General Ledger\Data",
+    r"C:\Users\rtrpr\.gemini\antigravity\scratch\VB General Ledger\data"
 ]
 
 def get_default_data_dir() -> str:
-    """Find the first existing data directory from default options, returning clean relative path if possible."""
-    for path in DEFAULT_DATA_DIRS:
-        if os.path.exists(path) and os.path.isdir(path):
-            return path
-    return "./Data"
+    """Return the absolute path to the default Data directory."""
+    for p in FALLBACK_DATA_DIRS:
+        if os.path.exists(p) and os.path.isdir(p):
+            return p
+    return DEFAULT_DATA_DIR
 
 
 def find_excel_files(folder_path: str) -> list:
     """
-    Smartly locate Excel files in folder_path, its subfolders (like Data/), or recursively.
+    Smartly locate Excel files in folder_path (resolving relative paths against BASE_DIR),
+    its subfolders (like Data/), or recursively.
     """
-    if not folder_path or not os.path.exists(folder_path):
+    if not folder_path or not folder_path.strip():
+        target_path = get_default_data_dir()
+    else:
+        target_path = folder_path.strip()
+        # Resolve relative paths against BASE_DIR
+        if not os.path.isabs(target_path):
+            target_path = os.path.abspath(os.path.join(BASE_DIR, target_path))
+            
+    # Check if target_path exists
+    if not os.path.exists(target_path):
+        # Fallback to get_default_data_dir if target_path does not exist
+        target_path = get_default_data_dir()
+        
+    if not os.path.exists(target_path):
         return []
         
-    # 1. Direct search in folder_path
-    files = glob.glob(os.path.join(folder_path, "*.xlsx")) + glob.glob(os.path.join(folder_path, "*.xls"))
-    # Filter out temporary Excel locking files (starting with ~$)
+    # 1. Direct search in target_path
+    files = glob.glob(os.path.join(target_path, "*.xlsx")) + glob.glob(os.path.join(target_path, "*.xls"))
     files = [f for f in files if not os.path.basename(f).startswith("~$")]
     if files:
         return sorted(files)
         
-    # 2. Check for Data/data subfolder inside folder_path
+    # 2. Check for Data/data subfolder inside target_path
     for sub in ["Data", "data", "DATA"]:
-        sub_path = os.path.join(folder_path, sub)
+        sub_path = os.path.join(target_path, sub)
         if os.path.exists(sub_path):
             sub_files = glob.glob(os.path.join(sub_path, "*.xlsx")) + glob.glob(os.path.join(sub_path, "*.xls"))
             sub_files = [f for f in sub_files if not os.path.basename(f).startswith("~$")]
@@ -44,10 +62,20 @@ def find_excel_files(folder_path: str) -> list:
                 return sorted(sub_files)
                 
     # 3. Fallback: Recursive search in all subdirectories
-    rec_files = glob.glob(os.path.join(folder_path, "**", "*.xlsx"), recursive=True) + \
-                glob.glob(os.path.join(folder_path, "**", "*.xls"), recursive=True)
+    rec_files = glob.glob(os.path.join(target_path, "**", "*.xlsx"), recursive=True) + \
+                glob.glob(os.path.join(target_path, "**", "*.xls"), recursive=True)
     rec_files = [f for f in rec_files if not os.path.basename(f).startswith("~$")]
-    return sorted(rec_files)
+    if rec_files:
+        return sorted(rec_files)
+
+    # 4. Ultimate fallback: Search default project Data directory
+    default_fallback = get_default_data_dir()
+    if target_path != default_fallback and os.path.exists(default_fallback):
+        fb_files = glob.glob(os.path.join(default_fallback, "*.xlsx")) + glob.glob(os.path.join(default_fallback, "*.xls"))
+        fb_files = [f for f in fb_files if not os.path.basename(f).startswith("~$")]
+        return sorted(fb_files)
+
+    return []
 
 
 def load_single_excel(file_source, source_name: str) -> pd.DataFrame:
@@ -102,7 +130,7 @@ def load_ledger_data_cached(folder_path: str = None):
     processed_files = []
     errors = []
     
-    excel_files = find_excel_files(folder_path) if folder_path else []
+    excel_files = find_excel_files(folder_path)
     
     for filepath in excel_files:
         filename = os.path.basename(filepath)
