@@ -66,13 +66,11 @@ def find_excel_files(folder_path: str = None) -> list:
         if not os.path.exists(target_path):
             continue
             
-        # 1. Direct search
         files = glob.glob(os.path.join(target_path, "*.xlsx")) + glob.glob(os.path.join(target_path, "*.xls"))
         files = [f for f in files if not os.path.basename(f).startswith("~$")]
         if files:
             return sorted(files)
             
-        # 2. Subfolder search
         for sub in ["Data", "data", "DATA"]:
             sub_path = os.path.join(target_path, sub)
             if os.path.exists(sub_path):
@@ -81,7 +79,6 @@ def find_excel_files(folder_path: str = None) -> list:
                 if sub_files:
                     return sorted(sub_files)
                     
-        # 3. Recursive search
         rec_files = glob.glob(os.path.join(target_path, "**", "*.xlsx"), recursive=True) + \
                     glob.glob(os.path.join(target_path, "**", "*.xls"), recursive=True)
         rec_files = [f for f in rec_files if not os.path.basename(f).startswith("~$")]
@@ -101,10 +98,8 @@ def load_single_excel(file_source, source_name: str) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
         
-    # Standardize column names: lowercase and stripped whitespace
     df.columns = [str(c).strip().lower() for c in df.columns]
     
-    # Required core columns specification & fallbacks
     numeric_cols = ['debit', 'credit', 'net_amount']
     for col in numeric_cols:
         if col in df.columns:
@@ -112,13 +107,11 @@ def load_single_excel(file_source, source_name: str) -> pd.DataFrame:
         else:
             df[col] = 0.0
             
-    # Format date column
     if 'date' in df.columns:
         df['date'] = pd.to_datetime(df['date'], errors='coerce')
     else:
         df['date'] = pd.NaT
 
-    # Ensure text string columns are clean
     text_cols = [
         'account_name', 'transaction_details', 'transaction_type', 
         'reference_number', 'entity_number', 'contact_id', 
@@ -152,7 +145,6 @@ def load_ledger_data_cached(folder_path: str = None):
     check_dirs = [folder_path, DEFAULT_DATA_DIR, BASE_DIR]
     for d in check_dirs:
         if d and os.path.exists(d):
-            # Check for parquet
             pq_file = os.path.join(d, "ledger_data.parquet")
             if not os.path.exists(pq_file):
                 pq_file = os.path.join(d, "Data", "ledger_data.parquet")
@@ -170,7 +162,6 @@ def load_ledger_data_cached(folder_path: str = None):
                 except Exception:
                     pass
 
-            # Check for compressed CSV
             gz_file = os.path.join(d, "ledger_data.csv.gz")
             if not os.path.exists(gz_file):
                 gz_file = os.path.join(d, "Data", "ledger_data.csv.gz")
@@ -190,7 +181,6 @@ def load_ledger_data_cached(folder_path: str = None):
                 except Exception:
                     pass
 
-    # Fallback to reading raw *.xlsx files
     dfs = []
     processed_files = []
     errors = []
@@ -376,19 +366,21 @@ def load_ledger_data(mode: str = "Local / Repository Data", folder_path: str = N
     return load_ledger_data_cached(folder_path=target_dir)
 
 
+@st.cache_data(show_spinner=False)
 def extract_unique_vendors(df: pd.DataFrame) -> list:
     """
-    Extract unique, non-blank vendor names from transaction_details (and contact_id fallback).
+    Extract unique, non-blank vendor names efficiently with caching to prevent RAM overhead.
     """
-    vendors = set()
-    if 'transaction_details' in df.columns:
-        valid_details = df['transaction_details'].dropna().astype(str).str.strip()
-        valid = valid_details[~valid_details.str.lower().isin(['', 'nan', 'none', 'nat', '-1', '0', 'null'])]
-        vendors.update(valid.tolist())
-    elif 'contact_id' in df.columns:
-        valid_contacts = df['contact_id'].dropna().astype(str).str.strip()
-        valid = valid_contacts[~valid_contacts.str.lower().isin(['', 'nan', 'none', 'nat', '-1', '0'])]
-        vendors.update(valid.tolist())
+    if df is None or df.empty:
+        return []
         
-    sorted_vendors = sorted(list(vendors), key=lambda x: str(x).upper())
-    return sorted_vendors
+    col = 'transaction_details' if 'transaction_details' in df.columns else 'contact_id'
+    if col in df.columns:
+        unique_vals = df[col].dropna().unique()
+        cleaned = set()
+        for v in unique_vals:
+            s = str(v).strip()
+            if s.lower() not in ['', 'nan', 'none', 'nat', '-1', '0', 'null']:
+                cleaned.add(s)
+        return sorted(list(cleaned), key=lambda x: x.upper())
+    return []
