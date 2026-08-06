@@ -198,7 +198,7 @@ st.sidebar.subheader("📂 Ingestion Status")
 
 if load_stats['files_count'] > 0:
     st.sidebar.success(f"Loaded **{load_stats['files_count']}** Excel file(s).")
-    st.sidebar.caption(f"• **Available Records:** {load_stats['unique_rows']:,}")
+    st.sidebar.caption(f"• **Total Available Records:** {load_stats['unique_rows']:,}")
     
     with st.sidebar.expander("Loaded Files List", expanded=False):
         for fn in load_stats['processed_files']:
@@ -212,7 +212,7 @@ else:
 
 
 # -----------------------------------------------------------------------------
-# 4. FILTERS & SEARCH CONTROLS
+# 4. FILTERS & SEARCH CONTROLS (ALWAYS VISIBLE DROPDOWN & SEARCH)
 # -----------------------------------------------------------------------------
 selected_vendors = []
 vendor_keyword = ""
@@ -222,31 +222,27 @@ selected_date_range = None
 
 if not df_raw.empty:
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🔍 Filters & Search")
+    st.sidebar.subheader("🔍 Vendor & Ledger Search")
 
-    # Vendor Selector (transaction_details) - DEFAULT MODE
+    # 1. ALWAYS-VISIBLE VENDOR DROPDOWN
     unique_vendors = extract_unique_vendors(df_raw)
     
     st.sidebar.markdown("**Vendor Selection (`transaction_details`)**")
-    vendor_mode = st.sidebar.radio(
-        "Vendor Filter Mode",
-        ["Select Vendor(s)", "Keyword Search", "Show All (All Transactions)"],
-        index=0,
-        horizontal=True,
-        help="Choose 'Select Vendor(s)' to query specific vendor transactions without background overhead."
+    selected_vendors = st.sidebar.multiselect(
+        "Select Vendor(s) from Dropdown",
+        options=unique_vendors,
+        default=[],
+        placeholder="Click to select vendor name(s)..."
     )
-    
-    if vendor_mode == "Select Vendor(s)":
-        selected_vendors = st.sidebar.multiselect(
-            "Search / Select Vendor (`transaction_details`)",
-            options=unique_vendors,
-            placeholder="Select vendor name..."
-        )
-    elif vendor_mode == "Keyword Search":
-        vendor_keyword = st.sidebar.text_input(
-            "Vendor / Account Keyword Search",
-            placeholder="Enter vendor detail or account keyword..."
-        )
+
+    # 2. ALWAYS-VISIBLE KEYWORD SEARCH
+    vendor_keyword = st.sidebar.text_input(
+        "Or Search Vendor / Detail Keyword",
+        value="",
+        placeholder="Type vendor or account keyword..."
+    )
+
+    st.sidebar.markdown("---")
 
     # Date Range Filter
     valid_dates = df_raw['date'].dropna()
@@ -290,19 +286,19 @@ if df_raw.empty:
     st.info("👋 Welcome! Please select a valid Data Folder path in the sidebar or upload `.xlsx` files to get started.")
     st.stop()
 
-# Check if user has selected a vendor / search query / branch
+# Check if user has made any filter / dropdown selection
 has_selection = (
-    (vendor_mode == "Select Vendor(s)" and bool(selected_vendors)) or
-    (vendor_mode == "Keyword Search" and bool(vendor_keyword.strip())) or
-    (vendor_mode == "Show All (All Transactions)") or
-    bool(selected_branches)
+    bool(selected_vendors) or 
+    bool(vendor_keyword.strip()) or 
+    bool(selected_branches) or 
+    bool(selected_types)
 )
 
 if not has_selection:
     st.markdown("""
     <div class="prompt-box">
-        👈 <b>Please select a Vendor from the sidebar dropdown</b> (or enter a Keyword Search) to query transactions.<br>
-        <i>Note: This on-demand query mode ensures zero RAM overhead and instant load times.</i>
+        👈 <b>Please select a Vendor from the dropdown in the sidebar</b> (or enter a Keyword Search) to view ledger transactions.<br>
+        <i>On-demand query mode ensures fast load times and zero memory overhead.</i>
     </div>
     """, unsafe_allow_html=True)
     st.stop()
@@ -333,10 +329,12 @@ if selected_branches:
 if selected_types:
     mask &= df_raw['transaction_type'].isin(selected_types)
 
-# Vendor filtering
-if vendor_mode == "Select Vendor(s)" and selected_vendors:
+# Vendor dropdown selection filtering
+if selected_vendors:
     mask &= (df_raw['transaction_details'].isin(selected_vendors) | df_raw['contact_id'].isin(selected_vendors))
-elif vendor_mode == "Keyword Search" and vendor_keyword.strip():
+
+# Vendor keyword text search filtering
+if vendor_keyword.strip():
     kw = vendor_keyword.strip().lower()
     match_details = df_raw['transaction_details'].str.lower().str.contains(kw, na=False)
     match_contact = df_raw['contact_id'].str.lower().str.contains(kw, na=False)
