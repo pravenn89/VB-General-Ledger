@@ -122,6 +122,16 @@ st.markdown("""
         font-weight: 700;
         color: #0F172A;
     }
+    
+    .prompt-box {
+        background-color: #F0F9FF;
+        border-left: 4px solid #0284C7;
+        padding: 20px;
+        border-radius: 8px;
+        margin-top: 20px;
+        color: #0369A1;
+        font-size: 1.1rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -187,9 +197,8 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("📂 Ingestion Status")
 
 if load_stats['files_count'] > 0:
-    st.sidebar.success(f"Successfully loaded **{load_stats['files_count']}** Excel file(s).")
-    st.sidebar.caption(f"• **Total Raw Records:** {load_stats['total_rows']:,}")
-    st.sidebar.caption(f"• **Deduplicated Records:** {load_stats['unique_rows']:,}")
+    st.sidebar.success(f"Loaded **{load_stats['files_count']}** Excel file(s).")
+    st.sidebar.caption(f"• **Available Records:** {load_stats['unique_rows']:,}")
     
     with st.sidebar.expander("Loaded Files List", expanded=False):
         for fn in load_stats['processed_files']:
@@ -205,9 +214,39 @@ else:
 # -----------------------------------------------------------------------------
 # 4. FILTERS & SEARCH CONTROLS
 # -----------------------------------------------------------------------------
+selected_vendors = []
+vendor_keyword = ""
+selected_branches = []
+selected_types = []
+selected_date_range = None
+
 if not df_raw.empty:
     st.sidebar.markdown("---")
     st.sidebar.subheader("🔍 Filters & Search")
+
+    # Vendor Selector (transaction_details) - DEFAULT MODE
+    unique_vendors = extract_unique_vendors(df_raw)
+    
+    st.sidebar.markdown("**Vendor Selection (`transaction_details`)**")
+    vendor_mode = st.sidebar.radio(
+        "Vendor Filter Mode",
+        ["Select Vendor(s)", "Keyword Search", "Show All (All Transactions)"],
+        index=0,
+        horizontal=True,
+        help="Choose 'Select Vendor(s)' to query specific vendor transactions without background overhead."
+    )
+    
+    if vendor_mode == "Select Vendor(s)":
+        selected_vendors = st.sidebar.multiselect(
+            "Search / Select Vendor (`transaction_details`)",
+            options=unique_vendors,
+            placeholder="Select vendor name..."
+        )
+    elif vendor_mode == "Keyword Search":
+        vendor_keyword = st.sidebar.text_input(
+            "Vendor / Account Keyword Search",
+            placeholder="Enter vendor detail or account keyword..."
+        )
 
     # Date Range Filter
     valid_dates = df_raw['date'].dropna()
@@ -221,8 +260,6 @@ if not df_raw.empty:
             min_value=min_date,
             max_value=max_date
         )
-    else:
-        selected_date_range = None
 
     # Branch Filter
     all_branches = sorted([b for b in df_raw['branch_name'].unique() if b])
@@ -242,80 +279,9 @@ if not df_raw.empty:
         placeholder="All Types"
     )
 
-    # Vendor Selector (transaction_details)
-    unique_vendors = extract_unique_vendors(df_raw)
-    
-    st.sidebar.markdown("**Vendor Selection (`transaction_details`)**")
-    vendor_mode = st.sidebar.radio(
-        "Vendor Filter Method",
-        ["All Vendors", "Select Vendor(s)", "Keyword Search"],
-        index=0,
-        horizontal=True
-    )
-    
-    selected_vendors = []
-    vendor_keyword = ""
-    
-    if vendor_mode == "Select Vendor(s)":
-        selected_vendors = st.sidebar.multiselect(
-            "Search / Select Vendor (`transaction_details`)",
-            options=unique_vendors,
-            placeholder="Type vendor or transaction detail..."
-        )
-    elif vendor_mode == "Keyword Search":
-        vendor_keyword = st.sidebar.text_input(
-            "Vendor / Account Keyword Search",
-            placeholder="Enter detail keyword or account name..."
-        )
-
 
 # -----------------------------------------------------------------------------
-# 5. FILTER EXECUTION LOGIC
-# -----------------------------------------------------------------------------
-df_filtered = df_raw
-
-if not df_raw.empty:
-    # Apply filters iteratively
-    mask = pd.Series(True, index=df_raw.index)
-    
-    # Date filtering
-    if selected_date_range and isinstance(selected_date_range, (tuple, list)):
-        if len(selected_date_range) == 2:
-            start_d, end_d = selected_date_range
-            start_ts = pd.to_datetime(start_d)
-            end_ts = pd.to_datetime(end_d) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-            mask &= (df_raw['date'] >= start_ts) & (df_raw['date'] <= end_ts)
-        elif len(selected_date_range) == 1:
-            start_d = selected_date_range[0]
-            start_ts = pd.to_datetime(start_d)
-            mask &= (df_raw['date'] >= start_ts)
-
-    # Branch filtering
-    if selected_branches:
-        mask &= df_raw['branch_name'].isin(selected_branches)
-
-    # Transaction type filtering
-    if selected_types:
-        mask &= df_raw['transaction_type'].isin(selected_types)
-
-    # Vendor filtering
-    if vendor_mode == "Select Vendor(s)" and selected_vendors:
-        mask &= (df_raw['transaction_details'].isin(selected_vendors) | df_raw['contact_id'].isin(selected_vendors))
-    elif vendor_mode == "Keyword Search" and vendor_keyword.strip():
-        kw = vendor_keyword.strip().lower()
-        match_details = df_raw['transaction_details'].str.lower().str.contains(kw, na=False)
-        match_contact = df_raw['contact_id'].str.lower().str.contains(kw, na=False)
-        match_acc = df_raw['account_name'].str.lower().str.contains(kw, na=False)
-        mask &= (match_details | match_contact | match_acc)
-
-    df_filtered = df_raw[mask]
-    
-    # Force Garbage Collection to keep memory usage low
-    gc.collect()
-
-
-# -----------------------------------------------------------------------------
-# 6. DASHBOARD MAIN CONTENT
+# 5. DASHBOARD MAIN CONTENT & INITIAL PROMPT
 # -----------------------------------------------------------------------------
 st.markdown('<div class="app-title">VASANTA BHAVAN HOTELS INDIA (P) LTD</div>', unsafe_allow_html=True)
 st.markdown('<div class="app-subtitle">Multi-File General Ledger Aggregator & Vendor Transaction Explorer</div>', unsafe_allow_html=True)
@@ -323,6 +289,61 @@ st.markdown('<div class="app-subtitle">Multi-File General Ledger Aggregator & Ve
 if df_raw.empty:
     st.info("👋 Welcome! Please select a valid Data Folder path in the sidebar or upload `.xlsx` files to get started.")
     st.stop()
+
+# Check if user has selected a vendor / search query / branch
+has_selection = (
+    (vendor_mode == "Select Vendor(s)" and bool(selected_vendors)) or
+    (vendor_mode == "Keyword Search" and bool(vendor_keyword.strip())) or
+    (vendor_mode == "Show All (All Transactions)") or
+    bool(selected_branches)
+)
+
+if not has_selection:
+    st.markdown("""
+    <div class="prompt-box">
+        👈 <b>Please select a Vendor from the sidebar dropdown</b> (or enter a Keyword Search) to query transactions.<br>
+        <i>Note: This on-demand query mode ensures zero RAM overhead and instant load times.</i>
+    </div>
+    """, unsafe_allow_html=True)
+    st.stop()
+
+
+# -----------------------------------------------------------------------------
+# 6. FILTER EXECUTION LOGIC (ON-DEMAND)
+# -----------------------------------------------------------------------------
+mask = pd.Series(True, index=df_raw.index)
+
+# Date filtering
+if selected_date_range and isinstance(selected_date_range, (tuple, list)):
+    if len(selected_date_range) == 2:
+        start_d, end_d = selected_date_range
+        start_ts = pd.to_datetime(start_d)
+        end_ts = pd.to_datetime(end_d) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+        mask &= (df_raw['date'] >= start_ts) & (df_raw['date'] <= end_ts)
+    elif len(selected_date_range) == 1:
+        start_d = selected_date_range[0]
+        start_ts = pd.to_datetime(start_d)
+        mask &= (df_raw['date'] >= start_ts)
+
+# Branch filtering
+if selected_branches:
+    mask &= df_raw['branch_name'].isin(selected_branches)
+
+# Transaction type filtering
+if selected_types:
+    mask &= df_raw['transaction_type'].isin(selected_types)
+
+# Vendor filtering
+if vendor_mode == "Select Vendor(s)" and selected_vendors:
+    mask &= (df_raw['transaction_details'].isin(selected_vendors) | df_raw['contact_id'].isin(selected_vendors))
+elif vendor_mode == "Keyword Search" and vendor_keyword.strip():
+    kw = vendor_keyword.strip().lower()
+    match_details = df_raw['transaction_details'].str.lower().str.contains(kw, na=False)
+    match_contact = df_raw['contact_id'].str.lower().str.contains(kw, na=False)
+    match_acc = df_raw['account_name'].str.lower().str.contains(kw, na=False)
+    mask &= (match_details | match_contact | match_acc)
+
+df_filtered = df_raw[mask]
 
 # Key KPI Metrics
 col1, col2, col3, col4 = st.columns(4)
@@ -356,10 +377,7 @@ with tab_table:
     exp_col1, exp_col2, exp_col3 = st.columns([2, 1, 1])
     
     with exp_col1:
-        if len(df_filtered) > 10000:
-            st.markdown(f"Displaying top **10,000** of **{len(df_filtered):,}** matching transactions (Full dataset available in downloads)")
-        else:
-            st.markdown(f"Displaying **{len(df_filtered):,}** of **{len(df_raw):,}** transactions")
+        st.markdown(f"Displaying **{len(df_filtered):,}** matching transaction(s)")
         
     with exp_col2:
         st.download_button(
@@ -379,11 +397,8 @@ with tab_table:
             use_container_width=True
         )
 
-    # Slice top 10,000 rows for dataframe UI rendering to keep memory & DOM rendering ultra fast
-    df_display = df_filtered[present_cols].head(10000)
-
     st.dataframe(
-        df_display,
+        df_filtered[present_cols],
         column_config={
             "date": st.column_config.DateColumn("Date", format="DD/MM/YYYY"),
             "branch_name": st.column_config.TextColumn("Branch"),
@@ -429,3 +444,5 @@ with tab_summary:
         )
     else:
         st.info("No records available to summarize.")
+
+gc.collect()
