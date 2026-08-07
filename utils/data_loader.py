@@ -384,3 +384,62 @@ def extract_unique_vendors(df: pd.DataFrame) -> list:
                 cleaned.add(s)
         return sorted(list(cleaned), key=lambda x: x.upper())
     return []
+
+
+@st.cache_data(show_spinner=False)
+def find_matched_debit_credit_transactions(df_sub: pd.DataFrame) -> pd.DataFrame:
+    """
+    Identifies and matches transactions where Debit amount and Credit amount match exactly.
+    Pairs positive Debit entries with Credit entries of equal value for reconciliation reporting.
+    """
+    if df_sub is None or df_sub.empty:
+        return pd.DataFrame()
+
+    debits = df_sub[df_sub['debit'] > 0].copy()
+    credits = df_sub[df_sub['credit'] > 0].copy()
+
+    if debits.empty or credits.empty:
+        return pd.DataFrame()
+
+    debits['amount_key'] = debits['debit'].round(2)
+    credits['amount_key'] = credits['credit'].round(2)
+
+    unique_amts = set(debits['amount_key']).intersection(set(credits['amount_key']))
+
+    matched_records = []
+
+    for amt in sorted(unique_amts):
+        if amt <= 0:
+            continue
+        d_group = debits[debits['amount_key'] == amt]
+        c_group = credits[credits['amount_key'] == amt]
+
+        num_pairs = min(len(d_group), len(c_group))
+
+        d_matched = d_group.head(num_pairs).copy()
+        c_matched = c_group.head(num_pairs).copy()
+
+        for i in range(num_pairs):
+            match_id = f"MATCH-₹{amt:,.2f}-{i+1}"
+
+            d_row = d_matched.iloc[[i]].copy()
+            d_row['match_id'] = match_id
+            d_row['matched_amount'] = amt
+            d_row['match_type'] = 'Exact Amount Match'
+            matched_records.append(d_row)
+
+            c_row = c_matched.iloc[[i]].copy()
+            c_row['match_id'] = match_id
+            c_row['matched_amount'] = amt
+            c_row['match_type'] = 'Exact Amount Match'
+            matched_records.append(c_row)
+
+    if not matched_records:
+        return pd.DataFrame()
+
+    res = pd.concat(matched_records, ignore_index=True)
+    if 'amount_key' in res.columns:
+        res = res.drop(columns=['amount_key'])
+
+    res = res.sort_values(by=['matched_amount', 'match_id', 'date'], ascending=[False, True, True]).reset_index(drop=True)
+    return res

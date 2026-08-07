@@ -55,16 +55,39 @@ if PROJECT_ROOT not in sys.path:
 from utils.data_loader import (
     load_ledger_data, 
     extract_unique_vendors, 
+    find_matched_debit_credit_transactions,
     get_default_data_dir
 )
 
 
-# Cached helper to build Excel files lazily without bloating memory on every rerun
+# -----------------------------------------------------------------------------
+# LAZY CACHED EXCEL & CSV GENERATORS
+# -----------------------------------------------------------------------------
 @st.cache_data(show_spinner=False, max_entries=5)
 def convert_df_to_excel(df: pd.DataFrame) -> bytes:
+    """Report 1: Generate single sheet Excel workbook for full ledger."""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Filtered_Ledger')
+        df.to_excel(writer, index=False, sheet_name='Full_Ledger_Report')
+    return output.getvalue()
+
+
+@st.cache_data(show_spinner=False, max_entries=5)
+def convert_matched_to_excel(df_matched: pd.DataFrame) -> bytes:
+    """Report 2: Generate single sheet Excel workbook for matched debit/credit reconciliation."""
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df_matched.to_excel(writer, index=False, sheet_name='Matched_Reconciliation')
+    return output.getvalue()
+
+
+@st.cache_data(show_spinner=False, max_entries=5)
+def convert_dual_sheet_excel(df_full: pd.DataFrame, df_matched: pd.DataFrame) -> bytes:
+    """Master Report: Dual-sheet Excel workbook containing both Report 1 and Report 2."""
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df_full.to_excel(writer, index=False, sheet_name='Report_1_Full_Ledger')
+        df_matched.to_excel(writer, index=False, sheet_name='Report_2_Matched_Debit_Credit')
     return output.getvalue()
 
 
@@ -297,7 +320,7 @@ has_selection = (
 if not has_selection:
     st.markdown("""
     <div class="prompt-box">
-        👈 <b>Please select a Vendor from the dropdown in the sidebar</b> (or enter a Keyword Search) to view ledger transactions.<br>
+        👈 <b>Please select a Vendor from the dropdown in the sidebar</b> (or enter a Keyword Search) to view ledger transactions and reconciliation reports.<br>
         <i>On-demand query mode ensures fast load times and zero memory overhead.</i>
     </div>
     """, unsafe_allow_html=True)
@@ -343,6 +366,9 @@ if vendor_keyword.strip():
 
 df_filtered = df_raw[mask]
 
+# Compute Report 2: Matched Debit & Credit Reconciliation
+df_matched = find_matched_debit_credit_transactions(df_filtered)
+
 # Key KPI Metrics
 col1, col2, col3, col4 = st.columns(4)
 
@@ -360,9 +386,13 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 
 # -----------------------------------------------------------------------------
-# 7. EXPORT BUTTONS & INTERACTIVE TABLE
+# 7. EXPORT BUTTONS & INTERACTIVE MULTI-REPORT TABS
 # -----------------------------------------------------------------------------
-tab_table, tab_summary = st.tabs(["📋 Filtered Ledger Transactions", "📊 Vendor / Branch Summary"])
+tab_report1, tab_report2, tab_summary = st.tabs([
+    "📋 Report 1: Full Filtered Ledger", 
+    "⚖️ Report 2: Matched Debit & Credit Reconciliation", 
+    "📊 Vendor / Branch Summary"
+])
 
 display_columns = [
     'date', 'branch_name', 'contact_id', 'account_name', 
@@ -371,28 +401,44 @@ display_columns = [
 ]
 present_cols = [c for c in display_columns if c in df_filtered.columns]
 
-with tab_table:
-    exp_col1, exp_col2, exp_col3 = st.columns([2, 1, 1])
+# --- TAB 1: REPORT 1 (FULL FILTERED LEDGER) ---
+with tab_report1:
+    st.subheader("Report 1: Full Filtered General Ledger")
+    
+    exp_col1, exp_col2, exp_col3, exp_col4 = st.columns([2, 1, 1, 1])
     
     with exp_col1:
-        st.markdown(f"Displaying **{len(df_filtered):,}** matching transaction(s)")
+        st.markdown(f"Displaying **{len(df_filtered):,}** matching ledger transaction(s)")
         
     with exp_col2:
         st.download_button(
-            label="📥 Download CSV",
+            label="📥 CSV (Report 1)",
             data=convert_df_to_csv(df_filtered[present_cols]),
-            file_name=f"General_Ledger_Filtered_{datetime.date.today()}.csv",
+            file_name=f"Report_1_Full_Ledger_{datetime.date.today()}.csv",
             mime="text/csv",
             use_container_width=True
         )
         
     with exp_col3:
         st.download_button(
-            label="📊 Download Excel (.xlsx)",
+            label="📊 Excel (Report 1)",
             data=convert_df_to_excel(df_filtered[present_cols]),
-            file_name=f"General_Ledger_Filtered_{datetime.date.today()}.xlsx",
+            file_name=f"Report_1_Full_Ledger_{datetime.date.today()}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
+        )
+
+    with exp_col4:
+        st.download_button(
+            label="📁 Master Excel (Dual Sheet)",
+            data=convert_dual_sheet_excel(
+                df_filtered[present_cols], 
+                df_matched[[c for c in ['match_id', 'matched_amount', 'match_type'] + present_cols if c in df_matched.columns]] if not df_matched.empty else pd.DataFrame()
+            ),
+            file_name=f"Master_Ledger_And_Reconciliation_{datetime.date.today()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            help="Download single Excel file containing both Report 1 and Report 2 in separate sheets."
         )
 
     st.dataframe(
@@ -415,6 +461,75 @@ with tab_table:
     )
 
 
+# --- TAB 2: REPORT 2 (MATCHED DEBIT & CREDIT RECONCILIATION) ---
+with tab_report2:
+    st.subheader("Report 2: Matched Debit & Credit Reconciliation")
+    st.caption("Identifies and pairs transactions where Debit amounts and Credit amounts match exactly.")
+
+    if not df_matched.empty:
+        matched_pairs_count = df_matched['match_id'].nunique()
+        total_matched_val = df_matched['matched_amount'].sum() / 2.0  # divided by 2 as debit & credit each carry amount
+        unmatched_tx_count = len(df_filtered) - len(df_matched)
+
+        m_col1, m_col2, m_col3 = st.columns(3)
+        m_col1.metric("Matched Pairs Identified", f"{matched_pairs_count:,} pairs ({len(df_matched):,} rows)")
+        m_col2.metric("Total Matched Amount (₹)", f"₹ {total_matched_val:,.2f}")
+        m_col3.metric("Unmatched Transactions Left", f"{unmatched_tx_count:,} transactions")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        m_exp1, m_exp2, m_exp3 = st.columns([2, 1, 1])
+
+        with m_exp1:
+            st.markdown(f"Displaying **{len(df_matched):,}** matched reconciliation transactions")
+
+        matched_cols = ['match_id', 'matched_amount', 'match_type'] + present_cols
+        matched_cols_present = [c for c in matched_cols if c in df_matched.columns]
+
+        with m_exp2:
+            st.download_button(
+                label="📥 CSV (Report 2 - Matched)",
+                data=convert_df_to_csv(df_matched[matched_cols_present]),
+                file_name=f"Report_2_Matched_Reconciliation_{datetime.date.today()}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+
+        with m_exp3:
+            st.download_button(
+                label="📊 Excel (Report 2 - Matched)",
+                data=convert_matched_to_excel(df_matched[matched_cols_present]),
+                file_name=f"Report_2_Matched_Reconciliation_{datetime.date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+
+        st.dataframe(
+            df_matched[matched_cols_present],
+            column_config={
+                "match_id": st.column_config.TextColumn("Match Group ID"),
+                "matched_amount": st.column_config.NumberColumn("Matched Amount (₹)", format="₹ %.2f"),
+                "match_type": st.column_config.TextColumn("Match Category"),
+                "date": st.column_config.DateColumn("Date", format="DD/MM/YYYY"),
+                "branch_name": st.column_config.TextColumn("Branch"),
+                "contact_id": st.column_config.TextColumn("Vendor (`contact_id`)"),
+                "account_name": st.column_config.TextColumn("Account Name"),
+                "transaction_details": st.column_config.TextColumn("Details"),
+                "transaction_type": st.column_config.TextColumn("Type"),
+                "reference_number": st.column_config.TextColumn("Voucher / Ref No"),
+                "debit": st.column_config.NumberColumn("Debit (₹)", format="₹ %.2f"),
+                "credit": st.column_config.NumberColumn("Credit (₹)", format="₹ %.2f"),
+                "net_amount": st.column_config.NumberColumn("Net Amount (₹)", format="₹ %.2f")
+            },
+            use_container_width=True,
+            hide_index=True,
+            height=500
+        )
+    else:
+        st.info("No matching Debit and Credit amount pairs were found for the selected vendor / filters.")
+
+
+# --- TAB 3: SUMMARY ---
 with tab_summary:
     st.subheader("Aggregated Summary by Vendor / Details & Branch")
     group_col = 'transaction_details' if 'transaction_details' in df_filtered.columns else 'contact_id'
