@@ -74,10 +74,10 @@ def convert_df_to_excel(df: pd.DataFrame) -> bytes:
 
 @st.cache_data(show_spinner=False, max_entries=5)
 def convert_matched_to_excel(df_matched: pd.DataFrame) -> bytes:
-    """Report 2: Generate single sheet Excel workbook for matched debit/credit reconciliation."""
+    """Report 2: Generate single sheet Excel workbook for matched bill vs vendor_payment reconciliation."""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_matched.to_excel(writer, index=False, sheet_name='Matched_Reconciliation')
+        df_matched.to_excel(writer, index=False, sheet_name='Matched_Bill_vs_VendorPayment')
     return output.getvalue()
 
 
@@ -87,7 +87,7 @@ def convert_dual_sheet_excel(df_full: pd.DataFrame, df_matched: pd.DataFrame) ->
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df_full.to_excel(writer, index=False, sheet_name='Report_1_Full_Ledger')
-        df_matched.to_excel(writer, index=False, sheet_name='Report_2_Matched_Debit_Credit')
+        df_matched.to_excel(writer, index=False, sheet_name='Report_2_Bill_vs_VendorPayment')
     return output.getvalue()
 
 
@@ -366,7 +366,7 @@ if vendor_keyword.strip():
 
 df_filtered = df_raw[mask]
 
-# Compute Report 2: Matched Debit & Credit Reconciliation
+# Compute Report 2: Matched Bill (Debit) vs Vendor Payment (Credit) Reconciliation
 df_matched = find_matched_debit_credit_transactions(df_filtered)
 
 # Key KPI Metrics
@@ -390,7 +390,7 @@ st.markdown("<br>", unsafe_allow_html=True)
 # -----------------------------------------------------------------------------
 tab_report1, tab_report2, tab_summary = st.tabs([
     "📋 Report 1: Full Filtered Ledger", 
-    "⚖️ Report 2: Matched Debit & Credit Reconciliation", 
+    "⚖️ Report 2: Matched Bill vs Vendor Payment", 
     "📊 Vendor / Branch Summary"
 ])
 
@@ -433,7 +433,7 @@ with tab_report1:
             label="📁 Master Excel (Dual Sheet)",
             data=convert_dual_sheet_excel(
                 df_filtered[present_cols], 
-                df_matched[[c for c in ['match_id', 'matched_amount', 'match_type'] + present_cols if c in df_matched.columns]] if not df_matched.empty else pd.DataFrame()
+                df_matched[[c for c in ['match_id', 'match_category', 'matched_amount'] + present_cols if c in df_matched.columns]] if not df_matched.empty else pd.DataFrame()
             ),
             file_name=f"Master_Ledger_And_Reconciliation_{datetime.date.today()}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -461,45 +461,44 @@ with tab_report1:
     )
 
 
-# --- TAB 2: REPORT 2 (MATCHED DEBIT & CREDIT RECONCILIATION) ---
+# --- TAB 2: REPORT 2 (MATCHED BILL VS VENDOR PAYMENT RECONCILIATION) ---
 with tab_report2:
-    st.subheader("Report 2: Matched Debit & Credit Reconciliation")
-    st.caption("Identifies and pairs transactions where Debit amounts and Credit amounts match exactly.")
+    st.subheader("Report 2: Matched Bill (Debit) vs Vendor Payment (Credit) Reconciliation")
+    st.caption("Filters transaction_type 'bill' (Debit) and 'vendor_payment' (Credit) alone, matching equal amount transactions.")
 
     if not df_matched.empty:
         matched_pairs_count = df_matched['match_id'].nunique()
-        total_matched_val = df_matched['matched_amount'].sum() / 2.0  # divided by 2 as debit & credit each carry amount
-        unmatched_tx_count = len(df_filtered) - len(df_matched)
+        total_matched_val = df_matched['matched_amount'].sum() / 2.0  # divided by 2 as bill debit & payment credit each carry amount
 
         m_col1, m_col2, m_col3 = st.columns(3)
-        m_col1.metric("Matched Pairs Identified", f"{matched_pairs_count:,} pairs ({len(df_matched):,} rows)")
-        m_col2.metric("Total Matched Amount (₹)", f"₹ {total_matched_val:,.2f}")
-        m_col3.metric("Unmatched Transactions Left", f"{unmatched_tx_count:,} transactions")
+        m_col1.metric("Matched Pairs (Bill vs Payment)", f"{matched_pairs_count:,} pairs ({len(df_matched):,} rows)")
+        m_col2.metric("Total Reconciled Amount (₹)", f"₹ {total_matched_val:,.2f}")
+        m_col3.metric("Filtered Transactions Total", f"{len(df_filtered):,} transactions")
 
         st.markdown("<br>", unsafe_allow_html=True)
 
         m_exp1, m_exp2, m_exp3 = st.columns([2, 1, 1])
 
         with m_exp1:
-            st.markdown(f"Displaying **{len(df_matched):,}** matched reconciliation transactions")
+            st.markdown(f"Displaying **{len(df_matched):,}** matched Bill & Vendor Payment transactions")
 
-        matched_cols = ['match_id', 'matched_amount', 'match_type'] + present_cols
+        matched_cols = ['match_id', 'match_category', 'matched_amount'] + present_cols
         matched_cols_present = [c for c in matched_cols if c in df_matched.columns]
 
         with m_exp2:
             st.download_button(
-                label="📥 CSV (Report 2 - Matched)",
+                label="📥 CSV (Report 2 - Bill vs Payment)",
                 data=convert_df_to_csv(df_matched[matched_cols_present]),
-                file_name=f"Report_2_Matched_Reconciliation_{datetime.date.today()}.csv",
+                file_name=f"Report_2_Bill_vs_Vendor_Payment_{datetime.date.today()}.csv",
                 mime="text/csv",
                 use_container_width=True
             )
 
         with m_exp3:
             st.download_button(
-                label="📊 Excel (Report 2 - Matched)",
+                label="📊 Excel (Report 2 - Bill vs Payment)",
                 data=convert_matched_to_excel(df_matched[matched_cols_present]),
-                file_name=f"Report_2_Matched_Reconciliation_{datetime.date.today()}.xlsx",
+                file_name=f"Report_2_Bill_vs_Vendor_Payment_{datetime.date.today()}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True
             )
@@ -508,8 +507,8 @@ with tab_report2:
             df_matched[matched_cols_present],
             column_config={
                 "match_id": st.column_config.TextColumn("Match Group ID"),
+                "match_category": st.column_config.TextColumn("Transaction Category"),
                 "matched_amount": st.column_config.NumberColumn("Matched Amount (₹)", format="₹ %.2f"),
-                "match_type": st.column_config.TextColumn("Match Category"),
                 "date": st.column_config.DateColumn("Date", format="DD/MM/YYYY"),
                 "branch_name": st.column_config.TextColumn("Branch"),
                 "contact_id": st.column_config.TextColumn("Vendor (`contact_id`)"),
@@ -526,7 +525,7 @@ with tab_report2:
             height=500
         )
     else:
-        st.info("No matching Debit and Credit amount pairs were found for the selected vendor / filters.")
+        st.info("No matching Debit ('bill') and Credit ('vendor_payment') pairs were found for the selected vendor / filters.")
 
 
 # --- TAB 3: SUMMARY ---

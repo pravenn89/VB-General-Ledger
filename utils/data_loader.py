@@ -389,50 +389,58 @@ def extract_unique_vendors(df: pd.DataFrame) -> list:
 @st.cache_data(show_spinner=False)
 def find_matched_debit_credit_transactions(df_sub: pd.DataFrame) -> pd.DataFrame:
     """
-    Identifies and matches transactions where Debit amount and Credit amount match exactly.
-    Pairs positive Debit entries with Credit entries of equal value for reconciliation reporting.
+    Identifies and matches transactions between 'bill' (Debit) and 'vendor_payment' (Credit) where amounts match.
+    Specifically checks:
+    - Debit of 'bill' transactions
+    - Credit of 'vendor_payment' transactions
     """
     if df_sub is None or df_sub.empty:
         return pd.DataFrame()
 
-    debits = df_sub[df_sub['debit'] > 0].copy()
-    credits = df_sub[df_sub['credit'] > 0].copy()
+    tt_lower = df_sub['transaction_type'].astype(str).str.strip().str.lower()
 
-    if debits.empty or credits.empty:
+    # 1. Filter Bill transactions with Debit > 0
+    bills = df_sub[(tt_lower == 'bill') & (df_sub['debit'] > 0)].copy()
+
+    # 2. Filter Vendor Payment transactions with Credit > 0
+    payments = df_sub[(tt_lower == 'vendor_payment') & (df_sub['credit'] > 0)].copy()
+
+    if bills.empty or payments.empty:
         return pd.DataFrame()
 
-    debits['amount_key'] = debits['debit'].round(2)
-    credits['amount_key'] = credits['credit'].round(2)
+    bills['amount_key'] = bills['debit'].round(2)
+    payments['amount_key'] = payments['credit'].round(2)
 
-    unique_amts = set(debits['amount_key']).intersection(set(credits['amount_key']))
+    unique_amts = set(bills['amount_key']).intersection(set(payments['amount_key']))
 
     matched_records = []
 
     for amt in sorted(unique_amts):
         if amt <= 0:
             continue
-        d_group = debits[debits['amount_key'] == amt]
-        c_group = credits[credits['amount_key'] == amt]
 
-        num_pairs = min(len(d_group), len(c_group))
+        b_group = bills[bills['amount_key'] == amt]
+        p_group = payments[payments['amount_key'] == amt]
 
-        d_matched = d_group.head(num_pairs).copy()
-        c_matched = c_group.head(num_pairs).copy()
+        num_pairs = min(len(b_group), len(p_group))
+
+        b_matched = b_group.head(num_pairs).copy()
+        p_matched = p_group.head(num_pairs).copy()
 
         for i in range(num_pairs):
-            match_id = f"MATCH-₹{amt:,.2f}-{i+1}"
+            match_id = f"RECON-₹{amt:,.2f}-{i+1}"
 
-            d_row = d_matched.iloc[[i]].copy()
-            d_row['match_id'] = match_id
-            d_row['matched_amount'] = amt
-            d_row['match_type'] = 'Exact Amount Match'
-            matched_records.append(d_row)
+            b_row = b_matched.iloc[[i]].copy()
+            b_row['match_id'] = match_id
+            b_row['matched_amount'] = amt
+            b_row['match_category'] = 'Bill (Debit)'
+            matched_records.append(b_row)
 
-            c_row = c_matched.iloc[[i]].copy()
-            c_row['match_id'] = match_id
-            c_row['matched_amount'] = amt
-            c_row['match_type'] = 'Exact Amount Match'
-            matched_records.append(c_row)
+            p_row = p_matched.iloc[[i]].copy()
+            p_row['match_id'] = match_id
+            p_row['matched_amount'] = amt
+            p_row['match_category'] = 'Vendor Payment (Credit)'
+            matched_records.append(p_row)
 
     if not matched_records:
         return pd.DataFrame()
