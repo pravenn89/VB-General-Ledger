@@ -66,7 +66,7 @@ from utils.data_loader import (
 def convert_df_to_excel(df: pd.DataFrame) -> bytes:
     """Report 1: On-demand Excel generator with instant RAM garbage collection."""
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter', options={'in_memory': True}) as writer:
+    with pd.ExcelWriter(output, engine='xlsxwriter', engine_kwargs={'options': {'in_memory': True}}) as writer:
         df.to_excel(writer, index=False, sheet_name='Full_Ledger_Report')
     val = output.getvalue()
     del output
@@ -77,7 +77,7 @@ def convert_df_to_excel(df: pd.DataFrame) -> bytes:
 def convert_matched_to_excel(df_matched: pd.DataFrame) -> bytes:
     """Report 2: On-demand Excel generator for matched reconciliation with instant RAM cleanup."""
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter', options={'in_memory': True}) as writer:
+    with pd.ExcelWriter(output, engine='xlsxwriter', engine_kwargs={'options': {'in_memory': True}}) as writer:
         df_matched.to_excel(writer, index=False, sheet_name='Matched_Bill_vs_VendorPayment')
     val = output.getvalue()
     del output
@@ -88,7 +88,7 @@ def convert_matched_to_excel(df_matched: pd.DataFrame) -> bytes:
 def convert_dual_sheet_excel(df_full: pd.DataFrame, df_matched: pd.DataFrame) -> bytes:
     """Master Report: On-demand dual-sheet Excel generator with instant RAM cleanup."""
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter', options={'in_memory': True}) as writer:
+    with pd.ExcelWriter(output, engine='xlsxwriter', engine_kwargs={'options': {'in_memory': True}}) as writer:
         df_full.to_excel(writer, index=False, sheet_name='Report_1_Full_Ledger')
         df_matched.to_excel(writer, index=False, sheet_name='Report_2_Bill_vs_VendorPayment')
     val = output.getvalue()
