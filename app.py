@@ -78,7 +78,7 @@ def convert_matched_to_excel(df_matched: pd.DataFrame) -> bytes:
     """Report 2: On-demand Excel generator for matched reconciliation with instant RAM cleanup."""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter', engine_kwargs={'options': {'in_memory': True}}) as writer:
-        df_matched.to_excel(writer, index=False, sheet_name='Report 2 - Matched Reconciliation')
+        df_matched.to_excel(writer, index=False, sheet_name='Report 2 - Matched Recon')
     val = output.getvalue()
     del output
     gc.collect()
@@ -86,15 +86,15 @@ def convert_matched_to_excel(df_matched: pd.DataFrame) -> bytes:
 
 
 def convert_dual_sheet_excel(df_full: pd.DataFrame, df_matched: pd.DataFrame) -> bytes:
-    """Master Report: Combined Excel workbook with Sheet 1 (Full Ledger) & Sheet 2 (Matched Reconciliation)."""
+    """Master Report: Combined Excel workbook with Sheet 1 (Full Ledger) & Sheet 2 (Matched Recon)."""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter', engine_kwargs={'options': {'in_memory': True}}) as writer:
         df_full.to_excel(writer, index=False, sheet_name='Report 1 - Full Ledger')
         if not df_matched.empty:
-            df_matched.to_excel(writer, index=False, sheet_name='Report 2 - Matched Reconciliation')
+            df_matched.to_excel(writer, index=False, sheet_name='Report 2 - Matched Recon')
         else:
             empty_info = pd.DataFrame({'Status': ['No matching Bill (Debit) and Vendor Payment (Credit) pairs found.']})
-            empty_info.to_excel(writer, index=False, sheet_name='Report 2 - Matched Reconciliation')
+            empty_info.to_excel(writer, index=False, sheet_name='Report 2 - Matched Recon')
     val = output.getvalue()
     del output
     gc.collect()
@@ -430,7 +430,7 @@ st.markdown('<div class="master-download-card">', unsafe_allow_html=True)
 card_c1, card_c2 = st.columns([3, 2])
 with card_c1:
     st.markdown("### 📁 Combined 2-in-1 Master Excel Report")
-    st.caption("Downloads a single Excel file containing **Sheet 1 (Report 1 - Full Ledger)** & **Sheet 2 (Report 2 - Matched Bill vs Vendor Payment)**")
+    st.caption("Downloads a single Excel file containing **Sheet 1 (Report 1 - Full Ledger)** & **Sheet 2 (Report 2 - Matched Recon)**")
 with card_c2:
     st.download_button(
         label="📥 Download Single Combined Excel File (.xlsx)",
