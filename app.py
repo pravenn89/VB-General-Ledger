@@ -67,7 +67,7 @@ def convert_df_to_excel(df: pd.DataFrame) -> bytes:
     """Report 1: On-demand Excel generator with instant RAM garbage collection."""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter', engine_kwargs={'options': {'in_memory': True}}) as writer:
-        df.to_excel(writer, index=False, sheet_name='Full_Ledger_Report')
+        df.to_excel(writer, index=False, sheet_name='Report 1 - Full Ledger')
     val = output.getvalue()
     del output
     gc.collect()
@@ -78,7 +78,7 @@ def convert_matched_to_excel(df_matched: pd.DataFrame) -> bytes:
     """Report 2: On-demand Excel generator for matched reconciliation with instant RAM cleanup."""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter', engine_kwargs={'options': {'in_memory': True}}) as writer:
-        df_matched.to_excel(writer, index=False, sheet_name='Matched_Bill_vs_VendorPayment')
+        df_matched.to_excel(writer, index=False, sheet_name='Report 2 - Matched Reconciliation')
     val = output.getvalue()
     del output
     gc.collect()
@@ -86,11 +86,15 @@ def convert_matched_to_excel(df_matched: pd.DataFrame) -> bytes:
 
 
 def convert_dual_sheet_excel(df_full: pd.DataFrame, df_matched: pd.DataFrame) -> bytes:
-    """Master Report: On-demand dual-sheet Excel generator with instant RAM cleanup."""
+    """Master Report: Combined Excel workbook with Sheet 1 (Full Ledger) & Sheet 2 (Matched Reconciliation)."""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter', engine_kwargs={'options': {'in_memory': True}}) as writer:
-        df_full.to_excel(writer, index=False, sheet_name='Report_1_Full_Ledger')
-        df_matched.to_excel(writer, index=False, sheet_name='Report_2_Bill_vs_VendorPayment')
+        df_full.to_excel(writer, index=False, sheet_name='Report 1 - Full Ledger')
+        if not df_matched.empty:
+            df_matched.to_excel(writer, index=False, sheet_name='Report 2 - Matched Reconciliation')
+        else:
+            empty_info = pd.DataFrame({'Status': ['No matching Bill (Debit) and Vendor Payment (Credit) pairs found.']})
+            empty_info.to_excel(writer, index=False, sheet_name='Report 2 - Matched Reconciliation')
     val = output.getvalue()
     del output
     gc.collect()
@@ -160,6 +164,14 @@ st.markdown("""
         margin-top: 20px;
         color: #0369A1;
         font-size: 1.1rem;
+    }
+    
+    .master-download-card {
+        background-color: #EFF6FF;
+        border: 1.5px solid #BFDBFE;
+        border-radius: 10px;
+        padding: 16px;
+        margin-bottom: 20px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -402,14 +414,8 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 
 # -----------------------------------------------------------------------------
-# 7. EXPORT BUTTONS & INTERACTIVE MULTI-REPORT TABS
+# 7. PROMINENT COMBINED EXCEL WORKBOOK DOWNLOAD BANNER
 # -----------------------------------------------------------------------------
-tab_report1, tab_report2, tab_summary = st.tabs([
-    "📋 Report 1: Full Filtered Ledger", 
-    "⚖️ Report 2: Matched Bill vs Vendor Payment", 
-    "📊 Vendor / Branch Summary"
-])
-
 display_columns = [
     'date', 'branch_name', 'contact_id', 'account_name', 
     'transaction_details', 'transaction_type', 'reference_number', 
@@ -417,18 +423,49 @@ display_columns = [
 ]
 present_cols = [c for c in display_columns if c in df_filtered.columns]
 
+matched_cols = ['match_id', 'match_category', 'matched_amount'] + present_cols
+matched_cols_present = [c for c in matched_cols if c in df_matched.columns] if not df_matched.empty else []
+
+st.markdown('<div class="master-download-card">', unsafe_allow_html=True)
+card_c1, card_c2 = st.columns([3, 2])
+with card_c1:
+    st.markdown("### 📁 Combined 2-in-1 Master Excel Report")
+    st.caption("Downloads a single Excel file containing **Sheet 1 (Report 1 - Full Ledger)** & **Sheet 2 (Report 2 - Matched Bill vs Vendor Payment)**")
+with card_c2:
+    st.download_button(
+        label="📥 Download Single Combined Excel File (.xlsx)",
+        data=convert_dual_sheet_excel(
+            df_filtered[present_cols], 
+            df_matched[matched_cols_present] if not df_matched.empty else pd.DataFrame()
+        ),
+        file_name=f"General_Ledger_Combined_Report_{datetime.date.today()}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+st.markdown('</div>', unsafe_allow_html=True)
+
+
+# -----------------------------------------------------------------------------
+# 8. INTERACTIVE MULTI-REPORT TABS
+# -----------------------------------------------------------------------------
+tab_report1, tab_report2, tab_summary = st.tabs([
+    "📋 Report 1: Full Filtered Ledger", 
+    "⚖️ Report 2: Matched Bill vs Vendor Payment", 
+    "📊 Vendor / Branch Summary"
+])
+
 # --- TAB 1: REPORT 1 (FULL FILTERED LEDGER) ---
 with tab_report1:
     st.subheader("Report 1: Full Filtered General Ledger")
     
-    exp_col1, exp_col2, exp_col3, exp_col4 = st.columns([2, 1, 1, 1])
+    exp_col1, exp_col2, exp_col3 = st.columns([2, 1, 1])
     
     with exp_col1:
         st.markdown(f"Displaying **{len(df_filtered):,}** matching ledger transaction(s)")
         
     with exp_col2:
         st.download_button(
-            label="📥 CSV (Report 1)",
+            label="📥 CSV (Report 1 Only)",
             data=convert_df_to_csv(df_filtered[present_cols]),
             file_name=f"Report_1_Full_Ledger_{datetime.date.today()}.csv",
             mime="text/csv",
@@ -437,24 +474,11 @@ with tab_report1:
         
     with exp_col3:
         st.download_button(
-            label="📊 Excel (Report 1)",
+            label="📊 Excel (Report 1 Only)",
             data=convert_df_to_excel(df_filtered[present_cols]),
             file_name=f"Report_1_Full_Ledger_{datetime.date.today()}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
-        )
-
-    with exp_col4:
-        st.download_button(
-            label="📁 Master Excel (Dual Sheet)",
-            data=convert_dual_sheet_excel(
-                df_filtered[present_cols], 
-                df_matched[[c for c in ['match_id', 'match_category', 'matched_amount'] + present_cols if c in df_matched.columns]] if not df_matched.empty else pd.DataFrame()
-            ),
-            file_name=f"Master_Ledger_And_Reconciliation_{datetime.date.today()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-            help="Download single Excel file containing both Report 1 and Report 2 in separate sheets."
         )
 
     st.dataframe(
@@ -498,12 +522,9 @@ with tab_report2:
         with m_exp1:
             st.markdown(f"Displaying **{len(df_matched):,}** matched Bill & Vendor Payment transactions")
 
-        matched_cols = ['match_id', 'match_category', 'matched_amount'] + present_cols
-        matched_cols_present = [c for c in matched_cols if c in df_matched.columns]
-
         with m_exp2:
             st.download_button(
-                label="📥 CSV (Report 2 - Bill vs Payment)",
+                label="📥 CSV (Report 2 Only)",
                 data=convert_df_to_csv(df_matched[matched_cols_present]),
                 file_name=f"Report_2_Bill_vs_Vendor_Payment_{datetime.date.today()}.csv",
                 mime="text/csv",
@@ -512,7 +533,7 @@ with tab_report2:
 
         with m_exp3:
             st.download_button(
-                label="📊 Excel (Report 2 - Bill vs Payment)",
+                label="📊 Excel (Report 2 Only)",
                 data=convert_matched_to_excel(df_matched[matched_cols_present]),
                 file_name=f"Report_2_Bill_vs_Vendor_Payment_{datetime.date.today()}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
