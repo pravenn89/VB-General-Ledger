@@ -61,38 +61,44 @@ from utils.data_loader import (
 
 
 # -----------------------------------------------------------------------------
-# LAZY CACHED EXCEL & CSV GENERATORS
+# MEMORY-EFFICIENT ON-DEMAND EXPORT GENERATORS (ZERO PERMANENT RAM STORAGE)
 # -----------------------------------------------------------------------------
-@st.cache_data(show_spinner=False, max_entries=5)
 def convert_df_to_excel(df: pd.DataFrame) -> bytes:
-    """Report 1: Generate single sheet Excel workbook for full ledger."""
+    """Report 1: On-demand Excel generator with instant RAM garbage collection."""
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+    with pd.ExcelWriter(output, engine='xlsxwriter', options={'in_memory': True}) as writer:
         df.to_excel(writer, index=False, sheet_name='Full_Ledger_Report')
-    return output.getvalue()
+    val = output.getvalue()
+    del output
+    gc.collect()
+    return val
 
 
-@st.cache_data(show_spinner=False, max_entries=5)
 def convert_matched_to_excel(df_matched: pd.DataFrame) -> bytes:
-    """Report 2: Generate single sheet Excel workbook for matched bill vs vendor_payment reconciliation."""
+    """Report 2: On-demand Excel generator for matched reconciliation with instant RAM cleanup."""
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+    with pd.ExcelWriter(output, engine='xlsxwriter', options={'in_memory': True}) as writer:
         df_matched.to_excel(writer, index=False, sheet_name='Matched_Bill_vs_VendorPayment')
-    return output.getvalue()
+    val = output.getvalue()
+    del output
+    gc.collect()
+    return val
 
 
-@st.cache_data(show_spinner=False, max_entries=5)
 def convert_dual_sheet_excel(df_full: pd.DataFrame, df_matched: pd.DataFrame) -> bytes:
-    """Master Report: Dual-sheet Excel workbook containing both Report 1 and Report 2."""
+    """Master Report: On-demand dual-sheet Excel generator with instant RAM cleanup."""
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+    with pd.ExcelWriter(output, engine='xlsxwriter', options={'in_memory': True}) as writer:
         df_full.to_excel(writer, index=False, sheet_name='Report_1_Full_Ledger')
         df_matched.to_excel(writer, index=False, sheet_name='Report_2_Bill_vs_VendorPayment')
-    return output.getvalue()
+    val = output.getvalue()
+    del output
+    gc.collect()
+    return val
 
 
-@st.cache_data(show_spinner=False, max_entries=5)
 def convert_df_to_csv(df: pd.DataFrame) -> bytes:
+    """On-demand CSV generator."""
     return df.to_csv(index=False).encode('utf-8')
 
 
@@ -183,9 +189,19 @@ if data_source_mode == "Local / Repository Data (Recommended)":
         value=default_dir,
         help="Directory containing *.xlsx General Ledger reports."
     )
-    if st.sidebar.button("🔄 Refresh / Reload Folder"):
-        st.cache_data.clear()
-        st.rerun()
+    col_sb1, col_sb2 = st.sidebar.columns(2)
+    with col_sb1:
+        if st.button("🔄 Refresh Data", use_container_width=True):
+            st.cache_data.clear()
+            gc.collect()
+            st.rerun()
+    with col_sb2:
+        if st.button("🧹 Clear RAM", use_container_width=True, help="Flush memory and report buffers"):
+            st.cache_data.clear()
+            gc.collect()
+            st.sidebar.success("RAM cleared!")
+            st.rerun()
+
 elif data_source_mode == "Upload Excel Files":
     uploaded_files = st.sidebar.file_uploader(
         "Upload General Ledger Excel Files",
@@ -557,4 +573,5 @@ with tab_summary:
     else:
         st.info("No records available to summarize.")
 
+# Force explicit garbage collection after rendering to ensure RAM remains low
 gc.collect()
